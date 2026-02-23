@@ -11,7 +11,8 @@
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
-    "prepare": "npm run build"
+    "prepare": "npm run build",
+    "get-cookie": "npx tsx get-cookie.ts"
   },
   "keywords": [
     "mcp",
@@ -27,11 +28,13 @@
     "axios": "^1.7.2",
     "dotenv": "^17.3.1",
     "express": "^4.21.2",
+    "playwright": "^1.48.0",
     "zod": "^3.24.1"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.0.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.6.3"
   }
 }

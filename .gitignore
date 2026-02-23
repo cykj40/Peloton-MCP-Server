@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .env
+.peloton-cookie.json
 *.log
 .DS_Store
 *.tsbuildinfo

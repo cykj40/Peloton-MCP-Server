@@ -11,6 +11,8 @@ import { PelotonClient } from './services/pelotonClient.js';
 import { profileTools, handleProfileTool } from './tools/profile.js';
 import { workoutTools, handleWorkoutTool } from './tools/workouts.js';
 import { analyticsTools, handleAnalyticsTool } from './tools/analytics.js';
+import { loadCookie, saveCookie } from './services/cookieStore.js';
+import { refreshPelotonCookie } from './services/pelotonAuth.js';
 
 // Initialize Peloton client (will be set after authentication)
 let pelotonClient: PelotonClient | null = null;
@@ -91,24 +93,80 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   console.error('[Init] Peloton MCP Server starting...');
 
-  // Get session cookie from environment
-  const sessionCookie = process.env.PELOTON_SESSION_COOKIE;
+  // Try to load stored cookie first
+  let sessionCookie = await loadCookie();
 
+  // If no valid stored cookie, try to get one
   if (!sessionCookie) {
-    console.error('[Init] Error: PELOTON_SESSION_COOKIE must be set in .env file');
-    console.error('[Init] See AUTH_UPDATE.md for instructions on getting your session cookie');
-    process.exit(1);
+    console.error('[Init] No valid stored cookie found');
+
+    // Option 1: Try auto-refresh with credentials
+    const username = process.env.PELOTON_USERNAME;
+    const password = process.env.PELOTON_PASSWORD;
+
+    if (username && password) {
+      try {
+        console.error('[Init] Attempting automatic cookie refresh...');
+        sessionCookie = await refreshPelotonCookie(username, password);
+        await saveCookie(sessionCookie);
+        console.error('[Init] ✅ Cookie refreshed and stored successfully');
+      } catch (error) {
+        console.error('[Init] ⚠️  Auto-refresh failed:', (error as Error).message);
+        console.error('[Init] Falling back to manual cookie from .env...');
+      }
+    }
+
+    // Option 2: Fall back to manual cookie from .env
+    if (!sessionCookie) {
+      sessionCookie = process.env.PELOTON_SESSION_COOKIE || null;
+
+      if (!sessionCookie) {
+        console.error('[Init] ❌ Error: No valid session cookie available');
+        console.error('[Init] Please provide either:');
+        console.error('[Init]   1. PELOTON_USERNAME and PELOTON_PASSWORD for auto-refresh');
+        console.error('[Init]   2. PELOTON_SESSION_COOKIE from browser (see AUTH_UPDATE.md)');
+        process.exit(1);
+      }
+
+      console.error('[Init] Using manual cookie from .env');
+      // Store it for future use
+      await saveCookie(sessionCookie);
+    }
   }
 
   try {
-    console.error('[Init] Using session cookie from environment');
+    // Create Peloton client
     pelotonClient = new PelotonClient(sessionCookie);
 
     // Test connection
     const connectionTest = await pelotonClient.testConnection();
     if (!connectionTest.success) {
       console.error(`[Init] Connection test failed: ${connectionTest.details}`);
-      process.exit(1);
+
+      // If connection fails, try to refresh cookie one more time
+      const username = process.env.PELOTON_USERNAME;
+      const password = process.env.PELOTON_PASSWORD;
+
+      if (username && password) {
+        console.error('[Init] Attempting cookie refresh due to connection failure...');
+        try {
+          sessionCookie = await refreshPelotonCookie(username, password);
+          await saveCookie(sessionCookie);
+          pelotonClient = new PelotonClient(sessionCookie);
+
+          const retryTest = await pelotonClient.testConnection();
+          if (!retryTest.success) {
+            console.error('[Init] Connection still failed after refresh');
+            process.exit(1);
+          }
+          console.error('[Init] ✅ Connection successful after refresh');
+        } catch (refreshError) {
+          console.error('[Init] Refresh failed:', (refreshError as Error).message);
+          process.exit(1);
+        }
+      } else {
+        process.exit(1);
+      }
     }
 
     console.error(`[Init] ${connectionTest.details}`);
