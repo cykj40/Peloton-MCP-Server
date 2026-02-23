@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { PelotonClient } from '../services/pelotonClient.js';
 import { MuscleAnalysisSchema, WorkoutStatsSchema } from '../schemas/index.js';
 import {
@@ -7,7 +8,8 @@ import {
   analyzeTrainingBalance,
   formatMuscleName,
 } from '../services/analytics.js';
-import { PelotonWorkout } from '../types/index.js';
+import { isError } from '../types/errors.js';
+import { ToolResponse } from '../types/index.js';
 
 export const analyticsTools = [
   {
@@ -104,18 +106,21 @@ export const analyticsTools = [
       required: [],
     },
   },
-];
+] as const;
+
+export type AnalyticsToolName = (typeof analyticsTools)[number]['name'];
+type AnalyticsToolArgs = z.infer<typeof MuscleAnalysisSchema> | z.infer<typeof WorkoutStatsSchema>;
 
 export async function handleAnalyticsTool(
-  name: string,
-  args: any,
+  name: AnalyticsToolName,
+  args: AnalyticsToolArgs,
   client: PelotonClient
-): Promise<any> {
+): Promise<ToolResponse> {
   try {
     if (name === 'peloton_muscle_activity') {
       const params = MuscleAnalysisSchema.parse(args);
       const workouts = await client.getRecentWorkouts(100);
-      const muscleActivity = calculateMuscleActivity(workouts as PelotonWorkout[], params.period);
+      const muscleActivity = calculateMuscleActivity(workouts, params.period);
 
       if (params.response_format === 'json') {
         return {
@@ -129,38 +134,26 @@ export async function handleAnalyticsTool(
         };
       }
 
-      // Markdown format
       let markdown = `# Muscle Activity (${params.period.replace('_', ' ')})\n\n`;
-
       if (Object.keys(muscleActivity).length === 0) {
         markdown += 'No workout data available for this period.\n';
       } else {
         const sorted = Object.entries(muscleActivity).sort((a, b) => b[1] - a[1]);
         for (const [muscle, percentage] of sorted) {
-          const bar = '█'.repeat(Math.round(percentage / 5));
+          const bar = '#'.repeat(Math.round(percentage / 5));
           markdown += `**${muscle}:** ${percentage}% ${bar}\n`;
         }
       }
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: markdown,
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: markdown }] };
     }
 
     if (name === 'peloton_muscle_impact') {
       const params = MuscleAnalysisSchema.parse(args);
       const workouts = await client.getRecentWorkouts(100);
-
-      // Filter by period
       const days = params.period === '7_days' ? 7 : params.period === '30_days' ? 30 : 90;
       const startTimestamp = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
-      const filtered = (workouts as PelotonWorkout[]).filter((w) => w.created_at >= startTimestamp);
-
+      const filtered = workouts.filter((workout) => workout.created_at >= startTimestamp);
       const muscleImpact = calculateMuscleImpact(filtered);
 
       if (params.response_format === 'json') {
@@ -175,9 +168,7 @@ export async function handleAnalyticsTool(
         };
       }
 
-      // Markdown format
       let markdown = `# Muscle Impact (${params.period.replace('_', ' ')})\n\n`;
-
       if (Object.keys(muscleImpact).length === 0) {
         markdown += 'No workout data available for this period.\n';
       } else {
@@ -189,38 +180,23 @@ export async function handleAnalyticsTool(
         }
       }
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: markdown,
-          },
-        ],
-      };
+      return { content: [{ type: 'text', text: markdown }] };
     }
 
     if (name === 'peloton_workout_stats') {
       const params = WorkoutStatsSchema.parse(args);
       const workouts = await client.getRecentWorkouts(100);
-
       const startDate = params.start_date ? new Date(params.start_date) : undefined;
       const endDate = params.end_date ? new Date(params.end_date) : undefined;
-
-      const stats = calculateWorkoutStats(workouts as PelotonWorkout[], startDate, endDate);
+      const stats = calculateWorkoutStats(workouts, startDate, endDate);
 
       if (params.response_format === 'json') {
         return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify(stats, null, 2),
-            },
-          ],
+          content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }],
           structuredContent: stats,
         };
       }
 
-      // Markdown format
       let markdown = `# Workout Statistics\n\n`;
       markdown += `**Period:** ${stats.period_start.split('T')[0]} to ${stats.period_end.split('T')[0]}\n\n`;
       markdown += `## Totals\n`;
@@ -237,74 +213,40 @@ export async function handleAnalyticsTool(
         markdown += `- **${discipline}:** ${count} workouts\n`;
       }
 
+      return { content: [{ type: 'text', text: markdown }] };
+    }
+
+    const params = MuscleAnalysisSchema.parse(args);
+    const workouts = await client.getRecentWorkouts(100);
+    const days = params.period === '7_days' ? 7 : params.period === '30_days' ? 30 : 90;
+    const startTimestamp = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
+    const filtered = workouts.filter((workout) => workout.created_at >= startTimestamp);
+    const muscleImpact = calculateMuscleImpact(filtered);
+    const balance = analyzeTrainingBalance(muscleImpact);
+
+    if (params.response_format === 'json') {
       return {
-        content: [
-          {
-            type: 'text',
-            text: markdown,
-          },
-        ],
+        content: [{ type: 'text', text: JSON.stringify({ period: params.period, balance }, null, 2) }],
+        structuredContent: { period: params.period, balance },
       };
     }
 
-    if (name === 'peloton_training_balance') {
-      const params = MuscleAnalysisSchema.parse(args);
-      const workouts = await client.getRecentWorkouts(100);
+    let markdown = `# Training Balance (${params.period.replace('_', ' ')})\n\n`;
+    markdown += `## Body Balance\n`;
+    markdown += `- **Upper Body:** ${balance.upperBody}%\n`;
+    markdown += `- **Lower Body:** ${balance.lowerBody}%\n`;
+    markdown += `- **Status:** ${balance.balanced ? 'Balanced' : 'Imbalanced'}\n\n`;
+    markdown += `## Training Type\n`;
+    markdown += `- **Cardio Score:** ${balance.cardioScore}\n`;
+    markdown += `- **Strength Score:** ${balance.strengthScore}\n`;
 
-      // Filter by period
-      const days = params.period === '7_days' ? 7 : params.period === '30_days' ? 30 : 90;
-      const startTimestamp = Math.floor((Date.now() - days * 24 * 60 * 60 * 1000) / 1000);
-      const filtered = (workouts as PelotonWorkout[]).filter((w) => w.created_at >= startTimestamp);
-
-      const muscleImpact = calculateMuscleImpact(filtered);
-      const balance = analyzeTrainingBalance(muscleImpact);
-
-      if (params.response_format === 'json') {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({ period: params.period, balance }, null, 2),
-            },
-          ],
-          structuredContent: { period: params.period, balance },
-        };
-      }
-
-      // Markdown format
-      let markdown = `# Training Balance (${params.period.replace('_', ' ')})\n\n`;
-      markdown += `## Body Balance\n`;
-      markdown += `- **Upper Body:** ${balance.upperBody}%\n`;
-      markdown += `- **Lower Body:** ${balance.lowerBody}%\n`;
-      markdown += `- **Status:** ${balance.balanced ? '✅ Balanced' : '⚠️ Imbalanced'}\n\n`;
-      markdown += `## Training Type\n`;
-      markdown += `- **Cardio Score:** ${balance.cardioScore}\n`;
-      markdown += `- **Strength Score:** ${balance.strengthScore}\n`;
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: markdown,
-          },
-        ],
-      };
-    }
-
+    return { content: [{ type: 'text', text: markdown }] };
+  } catch (error: unknown) {
     return {
       content: [
         {
           type: 'text',
-          text: 'Unknown tool',
-        },
-      ],
-    };
-  } catch (error) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Error: ${(error as Error).message}`,
+          text: `Error: ${isError(error) ? error.message : 'Unknown error'}`,
         },
       ],
     };

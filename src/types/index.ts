@@ -1,10 +1,12 @@
+import { Discipline } from '../constants.js';
+
 export interface PelotonWorkout {
   id: string;
   name: string;
   duration: number; // seconds
   created_at: number; // Unix timestamp - CRITICAL for glucose correlation
   calories: number;
-  fitness_discipline: string;
+  fitness_discipline: Discipline | string;
   instructor?: {
     name: string;
     id: string;
@@ -32,6 +34,23 @@ export interface PelotonUser {
   created_at?: number;
 }
 
+export interface PelotonUserProfile {
+  username: string;
+  id: string;
+  total_workouts?: number;
+  total_followers?: number;
+  total_following?: number;
+  created_at?: number;
+}
+
+export interface WorkoutSearchParams {
+  discipline?: string;
+  instructor?: string;
+  startDate?: Date;
+  endDate?: Date;
+  limit?: number;
+}
+
 export interface MuscleGroupData {
   [muscle: string]: number; // percentage
 }
@@ -56,8 +75,8 @@ export interface WorkoutStats {
   period_end: string;
 }
 
-export interface CacheItem {
-  data: unknown;
+export interface CacheItem<T> {
+  data: T;
   expiry: number;
 }
 
@@ -70,6 +89,17 @@ export interface ApiResponse<T> {
   data?: T;
   error?: string;
   status: number;
+}
+
+export interface ToolTextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface ToolResponse {
+  [key: string]: unknown;
+  content: ToolTextContent[];
+  structuredContent?: unknown;
 }
 
 // Glucose correlation types

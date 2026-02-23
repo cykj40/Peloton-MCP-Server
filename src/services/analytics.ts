@@ -1,19 +1,23 @@
 import { PelotonWorkout, MuscleGroupData, MuscleImpactData, WorkoutStats } from '../types/index.js';
-import { MUSCLE_INTENSITY_MAP } from '../constants.js';
+import { Discipline, MUSCLE_INTENSITY_MAP } from '../constants.js';
+
+function isDiscipline(value: string): value is Discipline {
+  return value in MUSCLE_INTENSITY_MAP;
+}
 
 /**
  * Get muscle intensity map for a workout
  * For strength workouts, detects focus from title keywords
  */
 export function getMuscleIntensity(
-  discipline: string,
+  discipline: Discipline,
   workoutTitle: string = ''
 ): Record<string, number> {
-  const lowerDiscipline = discipline.toLowerCase();
+  const lowerDiscipline = discipline;
   const lowerTitle = workoutTitle.toLowerCase();
 
   // Get base mapping
-  const baseMapping = MUSCLE_INTENSITY_MAP[lowerDiscipline as keyof typeof MUSCLE_INTENSITY_MAP];
+  const baseMapping = MUSCLE_INTENSITY_MAP[lowerDiscipline];
 
   if (!baseMapping) {
     return { full_body: 5 };
@@ -62,7 +66,7 @@ export function getMuscleIntensity(
     }
   }
 
-  return baseMapping as Record<string, number>;
+  return baseMapping;
 }
 
 /**
@@ -72,10 +76,15 @@ export function calculateMuscleImpact(workouts: PelotonWorkout[]): MuscleImpactD
   const muscleGroups: MuscleImpactData = {};
 
   for (const workout of workouts) {
-    const muscleIntensities = getMuscleIntensity(
-      workout.fitness_discipline,
-      workout.name || workout.ride?.title || ''
-    );
+    const disciplineKey = workout.fitness_discipline.toLowerCase();
+    const muscleIntensities = isDiscipline(disciplineKey)
+      ? getMuscleIntensity(disciplineKey, workout.name || workout.ride?.title || '')
+      : (() => {
+          console.error(
+            `[Analytics] Unknown discipline "${workout.fitness_discipline}", using full-body fallback`
+          );
+          return { full_body: 5 };
+        })();
 
     // Duration factor: longer workouts = higher impact
     const durationMinutes = workout.duration / 60;
@@ -86,8 +95,13 @@ export function calculateMuscleImpact(workouts: PelotonWorkout[]): MuscleImpactD
         muscleGroups[muscle] = { score: 0, workouts: 0 };
       }
 
-      muscleGroups[muscle].score += intensity * intensityFactor;
-      muscleGroups[muscle].workouts += 1;
+      const group = muscleGroups[muscle];
+      if (!group) {
+        continue;
+      }
+
+      group.score += intensity * intensityFactor;
+      group.workouts += 1;
     }
   }
 
@@ -169,13 +183,20 @@ export function calculateWorkoutStats(
   const disciplines: Record<string, number> = {};
   for (const workout of filtered) {
     const discipline = workout.fitness_discipline;
-    disciplines[discipline] = (disciplines[discipline] || 0) + 1;
+    const currentCount = disciplines[discipline] ?? 0;
+    disciplines[discipline] = currentCount + 1;
   }
 
   // Get date range
   const timestamps = filtered.map(w => w.created_at).sort((a, b) => a - b);
-  const periodStart = timestamps[0] ? new Date(timestamps[0] * 1000).toISOString() : new Date().toISOString();
-  const periodEnd = timestamps[timestamps.length - 1] ? new Date(timestamps[timestamps.length - 1] * 1000).toISOString() : new Date().toISOString();
+  const firstTimestamp = timestamps[0];
+  const lastTimestamp = timestamps[timestamps.length - 1];
+  const periodStart = firstTimestamp !== undefined
+    ? new Date(firstTimestamp * 1000).toISOString()
+    : new Date().toISOString();
+  const periodEnd = lastTimestamp !== undefined
+    ? new Date(lastTimestamp * 1000).toISOString()
+    : new Date().toISOString();
 
   return {
     total_workouts: totalWorkouts,

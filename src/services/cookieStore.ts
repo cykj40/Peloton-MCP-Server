@@ -1,74 +1,102 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { z } from 'zod';
+import { CookieStoreError, isError } from '../types/errors.js';
 
 interface CookieData {
   value: string;
-  expiresAt: number; // Unix timestamp in milliseconds
+  expiresAt: number;
   createdAt: number;
 }
 
 const COOKIE_FILE = path.join(process.cwd(), '.peloton-cookie.json');
-const COOKIE_LIFETIME = 25 * 24 * 60 * 60 * 1000; // 25 days in milliseconds
-// We refresh at 25 days instead of 30 to have a safety buffer
+const COOKIE_LIFETIME = 25 * 24 * 60 * 60 * 1000;
+const CookieDataSchema = z.object({
+  value: z.string(),
+  expiresAt: z.number(),
+  createdAt: z.number(),
+});
+
+function isCookieData(value: unknown): value is CookieData {
+  return CookieDataSchema.safeParse(value).success;
+}
 
 /**
- * Load stored cookie from file
- * Returns null if file doesn't exist, is corrupted, or cookie is expired
+ * Load stored cookie from file.
+ * Returns null if file doesn't exist, is corrupted, or cookie is expired.
  */
 export async function loadCookie(): Promise<string | null> {
   try {
     const data = await fs.readFile(COOKIE_FILE, 'utf-8');
-    const cookieData: CookieData = JSON.parse(data);
+    const parsed: unknown = JSON.parse(data);
 
-    // Check if expired
-    if (Date.now() >= cookieData.expiresAt) {
-      const daysExpired = Math.floor((Date.now() - cookieData.expiresAt) / (24 * 60 * 60 * 1000));
+    if (!isCookieData(parsed)) {
+      throw new CookieStoreError('Cookie file format is invalid');
+    }
+
+    if (Date.now() >= parsed.expiresAt) {
+      const daysExpired = Math.floor((Date.now() - parsed.expiresAt) / (24 * 60 * 60 * 1000));
       console.error(`[Cookie] Stored cookie expired ${daysExpired} days ago`);
       return null;
     }
 
-    const daysRemaining = Math.floor((cookieData.expiresAt - Date.now()) / (24 * 60 * 60 * 1000));
+    const daysRemaining = Math.floor((parsed.expiresAt - Date.now()) / (24 * 60 * 60 * 1000));
     console.error(`[Cookie] Loaded valid cookie (expires in ${daysRemaining} days)`);
-    return cookieData.value;
+    return parsed.value;
+  } catch (error: unknown) {
+    const enoent = typeof error === 'object' && error !== null && 'code' in error
+      && (error as { code?: string }).code === 'ENOENT';
 
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+    if (enoent) {
       console.error('[Cookie] No stored cookie file found');
-    } else {
-      console.error('[Cookie] Error reading cookie file:', (error as Error).message);
+      return null;
     }
+
+    console.error('[Cookie] Error reading cookie file:', isError(error) ? error.message : 'Unknown error');
     return null;
   }
 }
 
 /**
- * Save cookie to file with expiry timestamp
+ * Save cookie to file with expiry timestamp.
  */
 export async function saveCookie(value: string): Promise<void> {
-  const now = Date.now();
-  const cookieData: CookieData = {
-    value,
-    expiresAt: now + COOKIE_LIFETIME,
-    createdAt: now,
-  };
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new CookieStoreError('Cannot save empty cookie value');
+  }
 
-  await fs.writeFile(COOKIE_FILE, JSON.stringify(cookieData, null, 2));
+  try {
+    const now = Date.now();
+    const cookieData: CookieData = {
+      value,
+      expiresAt: now + COOKIE_LIFETIME,
+      createdAt: now,
+    };
 
-  const expiryDate = new Date(cookieData.expiresAt).toLocaleDateString();
-  console.error(`[Cookie] Saved cookie (expires on ${expiryDate})`);
+    await fs.writeFile(COOKIE_FILE, JSON.stringify(cookieData, null, 2));
+
+    const expiryDate = new Date(cookieData.expiresAt).toLocaleDateString();
+    console.error(`[Cookie] Saved cookie (expires on ${expiryDate})`);
+  } catch (error: unknown) {
+    throw new CookieStoreError(
+      `Failed to save cookie: ${isError(error) ? error.message : 'Unknown error'}`,
+      error
+    );
+  }
 }
 
 /**
- * Delete stored cookie file
+ * Delete stored cookie file.
  */
 export async function deleteCookie(): Promise<void> {
   try {
     await fs.unlink(COOKIE_FILE);
     console.error('[Cookie] Deleted stored cookie file');
-  } catch (error) {
-    // File doesn't exist, that's fine
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.error('[Cookie] Error deleting cookie file:', (error as Error).message);
+  } catch (error: unknown) {
+    const enoent = typeof error === 'object' && error !== null && 'code' in error
+      && (error as { code?: string }).code === 'ENOENT';
+    if (!enoent) {
+      console.error('[Cookie] Error deleting cookie file:', isError(error) ? error.message : 'Unknown error');
     }
   }
 }

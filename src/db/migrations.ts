@@ -1,4 +1,5 @@
 import { getDatabase } from './database.js';
+import { CountRowSchema } from '../schemas/db.js';
 
 /**
  * Run all database migrations
@@ -94,8 +95,12 @@ export function runMigrations(): void {
   console.error('[Migrations] ✅ Database migrations completed');
 
   // Log table counts
-  const workoutCount = db.prepare('SELECT COUNT(*) as count FROM workouts').get() as { count: number };
-  const correlationCount = db.prepare('SELECT COUNT(*) as count FROM glucose_correlations').get() as { count: number };
+  const workoutCountRow = db.prepare('SELECT COUNT(*) as count FROM workouts').get();
+  const correlationCountRow = db.prepare('SELECT COUNT(*) as count FROM glucose_correlations').get();
+  const workoutCountParsed = CountRowSchema.safeParse(workoutCountRow);
+  const correlationCountParsed = CountRowSchema.safeParse(correlationCountRow);
+  const workoutCount = workoutCountParsed.success ? workoutCountParsed.data.count : 0;
+  const correlationCount = correlationCountParsed.success ? correlationCountParsed.data.count : 0;
 
-  console.error(`[DB] Current data: ${workoutCount.count} workouts, ${correlationCount.count} correlations`);
+  console.error(`[DB] Current data: ${workoutCount} workouts, ${correlationCount} correlations`);
 }

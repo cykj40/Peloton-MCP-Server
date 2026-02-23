@@ -62,4 +62,7 @@ export const MUSCLE_INTENSITY_MAP = {
     shoulders: 5,
     back: 6,
   },
-} as const;
+} as const satisfies Readonly<Record<string, Readonly<Record<string, number>>>>;
+
+export type Discipline = keyof typeof MUSCLE_INTENSITY_MAP;
+export type MuscleKey = keyof (typeof MUSCLE_INTENSITY_MAP)[Discipline];

@@ -6,14 +6,79 @@ import {
   MAX_RETRY_DELAY,
   DEFAULT_CACHE_TTL,
 } from '../constants.js';
-import { CacheItem, PelotonWorkout } from '../types/index.js';
+import { CacheItem, PelotonUserProfile, PelotonWorkout, WorkoutSearchParams } from '../types/index.js';
+import { isError, PelotonApiError, PelotonAuthError, PelotonRateLimitError } from '../types/errors.js';
 import { upsertWorkout, getRecentWorkoutsFromDB, getWorkoutCount } from '../db/queries.js';
+import {
+  PelotonMeResponseSchema,
+  PelotonWorkoutResponseSchema,
+  PelotonWorkoutsListResponseSchema,
+} from '../schemas/api.js';
 
-// In-memory cache
-const cache: Record<string, CacheItem> = {};
+type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
+
+const cache = new Map<string, CacheItem<unknown>>();
+
+function getEndpoint(config: AxiosRequestConfig): string {
+  const url = config.url ?? 'unknown-endpoint';
+
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+
+function parseRetryAfterMs(retryAfter: string | null | undefined): number {
+  if (!retryAfter) {
+    return INITIAL_RETRY_DELAY;
+  }
+
+  const asSeconds = Number(retryAfter);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+    return asSeconds * 1000;
+  }
+
+  const targetMs = Date.parse(retryAfter);
+  if (Number.isFinite(targetMs)) {
+    return Math.max(0, targetMs - Date.now());
+  }
+
+  return INITIAL_RETRY_DELAY;
+}
+
+function getRetryAfterHeaderValue(axiosError: AxiosError): string | undefined {
+  const retryAfter = axiosError.response?.headers?.['retry-after'];
+  return typeof retryAfter === 'string' ? retryAfter : undefined;
+}
+
+function mapWorkout(rawWorkout: PelotonWorkoutResponse): PelotonWorkout {
+  const instructor = rawWorkout.ride?.instructor ?? rawWorkout.instructor;
+  const ride = rawWorkout.ride
+    ? {
+        title: rawWorkout.ride.title ?? rawWorkout.name ?? 'Untitled Workout',
+        duration: rawWorkout.ride.duration ?? rawWorkout.duration,
+        ...(rawWorkout.ride.instructor ? { instructor: rawWorkout.ride.instructor } : {}),
+      }
+    : undefined;
+
+  return {
+    id: rawWorkout.id,
+    name: rawWorkout.ride?.title ?? rawWorkout.name ?? 'Untitled Workout',
+    duration: rawWorkout.ride?.duration ?? rawWorkout.duration,
+    created_at: rawWorkout.created_at,
+    calories: rawWorkout.calories ?? 0,
+    fitness_discipline: rawWorkout.fitness_discipline,
+    ...(instructor ? { instructor } : {}),
+    ...(rawWorkout.total_work !== undefined ? { total_work: rawWorkout.total_work } : {}),
+    ...(rawWorkout.device_type !== undefined ? { device_type: rawWorkout.device_type } : {}),
+    ...(rawWorkout.status !== undefined ? { status: rawWorkout.status } : {}),
+    ...(ride ? { ride } : {}),
+  };
+}
 
 /**
- * Makes an API request with retry logic for rate limiting and caching
+ * Makes an API request with retry logic for rate limiting and caching.
  */
 async function makeApiRequest<T>(
   config: AxiosRequestConfig,
@@ -21,52 +86,78 @@ async function makeApiRequest<T>(
   cacheKey?: string,
   cacheTTL = DEFAULT_CACHE_TTL
 ): Promise<T> {
-  // Check cache
-  if (cacheKey && cache[cacheKey] && cache[cacheKey].expiry > Date.now()) {
-    console.error(`[Cache] Hit for: ${cacheKey}`);
-    return cache[cacheKey].data as T;
+  const endpoint = getEndpoint(config);
+
+  if (cacheKey) {
+    const cachedValue = cache.get(cacheKey);
+    if (cachedValue && cachedValue.expiry > Date.now()) {
+      console.error(`[Cache] Hit for: ${cacheKey}`);
+      // Safe cast because cache entries are only written by this function for the same cache key.
+      return cachedValue.data as T;
+    }
   }
 
   try {
     console.error(`[API] ${config.method?.toUpperCase()} ${config.url}`);
-    const response = await axios(config);
+    const response = await axios<T>(config);
 
-    // Cache the response
     if (cacheKey) {
-      cache[cacheKey] = {
+      cache.set(cacheKey, {
         data: response.data,
         expiry: Date.now() + cacheTTL,
-      };
+      });
       console.error(`[Cache] Stored: ${cacheKey}`);
     }
 
     return response.data;
-  } catch (error) {
-    const axiosError = error as AxiosError;
-
-    // Handle rate limiting (HTTP 429) with exponential backoff
-    if (axiosError.response?.status === 429 && retries < MAX_RETRIES) {
-      const retryDelay = Math.min(
-        INITIAL_RETRY_DELAY * Math.pow(2, retries),
-        MAX_RETRY_DELAY
-      );
-
-      console.error(
-        `[API] Rate limited. Retrying in ${retryDelay}ms (Attempt ${retries + 1}/${MAX_RETRIES})`
-      );
-
-      await new Promise((resolve) => setTimeout(resolve, retryDelay));
-      return makeApiRequest<T>(config, retries + 1, cacheKey, cacheTTL);
+  } catch (error: unknown) {
+    if (error instanceof PelotonApiError) {
+      throw error;
     }
 
-    // Handle other errors
-    if (axiosError.response) {
-      console.error(`[API] Error ${axiosError.response.status}:`, axiosError.response.data);
-    } else {
-      console.error(`[API] Error:`, axiosError.message);
+    const axiosError = error instanceof AxiosError ? error : null;
+    const status = axiosError?.response?.status;
+
+    if (status === 429) {
+      const retryAfterMs = parseRetryAfterMs(
+        axiosError ? getRetryAfterHeaderValue(axiosError) : undefined
+      );
+
+      if (retries < MAX_RETRIES) {
+        const retryDelay = Math.min(
+          Math.max(retryAfterMs, INITIAL_RETRY_DELAY) * Math.pow(2, retries),
+          MAX_RETRY_DELAY
+        );
+
+        console.error(
+          `[API] Rate limited. Retrying in ${retryDelay}ms (Attempt ${retries + 1}/${MAX_RETRIES})`
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
+        return makeApiRequest<T>(config, retries + 1, cacheKey, cacheTTL);
+      }
+
+      throw new PelotonRateLimitError(endpoint, retryAfterMs);
     }
 
-    throw error;
+    if (axiosError?.response) {
+      const responseStatus = axiosError.response.status;
+      const responseBody =
+        typeof axiosError.response.data === 'string'
+          ? axiosError.response.data
+          : JSON.stringify(axiosError.response.data);
+      throw new PelotonApiError(
+        `Peloton API error ${responseStatus}: ${responseBody}`,
+        responseStatus,
+        endpoint
+      );
+    }
+
+    if (isError(error)) {
+      throw new PelotonApiError(error.message, 0, endpoint);
+    }
+
+    throw new PelotonApiError('Unknown API request failure', 0, endpoint);
   }
 }
 
@@ -79,7 +170,7 @@ export class PelotonClient {
   }
 
   /**
-   * Test the connection and get user ID
+   * Test the connection and get user ID.
    */
   async testConnection(): Promise<{ success: boolean; details: string; userId?: string }> {
     try {
@@ -94,39 +185,39 @@ export class PelotonClient {
         },
       };
 
-      const response = await makeApiRequest<{ username: string; id: string }>(config);
+      const response = await makeApiRequest<unknown>(config);
+      const parsed = PelotonMeResponseSchema.safeParse(response);
 
-      if (response && response.username) {
-        this.userId = response.id;
-        return {
-          success: true,
-          details: `Connected as user: ${response.username}`,
-          userId: response.id,
-        };
+      if (!parsed.success) {
+        throw new PelotonApiError(
+          `Invalid /api/me response: ${parsed.error.message}`,
+          200,
+          '/api/me'
+        );
       }
 
+      this.userId = parsed.data.id;
       return {
-        success: false,
-        details: 'Could not verify connection',
+        success: true,
+        details: `Connected as user: ${parsed.data.username}`,
+        userId: parsed.data.id,
       };
-    } catch (error) {
-      const axiosError = error as AxiosError;
+    } catch (error: unknown) {
       return {
         success: false,
-        details: `Failed to connect: ${axiosError.message}`,
+        details: `Failed to connect: ${isError(error) ? error.message : 'Unknown error'}`,
       };
     }
   }
 
   /**
-   * Get recent workouts
+   * Get recent workouts.
    */
-  async getRecentWorkouts(limit: number = 10): Promise<any[]> {
-    // Ensure we have a user ID
+  async getRecentWorkouts(limit = 10): Promise<PelotonWorkout[]> {
     if (!this.userId) {
       const connectionTest = await this.testConnection();
       if (!connectionTest.success || !connectionTest.userId) {
-        throw new Error('Could not get user ID - please check authentication');
+        throw new PelotonAuthError('Could not get user ID - please check authentication');
       }
       this.userId = connectionTest.userId;
     }
@@ -149,28 +240,27 @@ export class PelotonClient {
       },
     };
 
-    const response = await makeApiRequest<{ data: any[] }>(config, 0, cacheKey);
-    const workouts = response.data || [];
+    const response = await makeApiRequest<unknown>(config, 0, cacheKey);
+    const parsed = PelotonWorkoutsListResponseSchema.safeParse(response);
 
-    // Store workouts in database for correlation analysis
+    if (!parsed.success) {
+      throw new PelotonApiError(
+        `Invalid workouts response: ${parsed.error.message}`,
+        200,
+        `/api/user/${this.userId}/workouts`
+      );
+    }
+
+    const workouts = parsed.data.data.map(mapWorkout);
+
     for (const workout of workouts) {
       try {
-        const mappedWorkout: PelotonWorkout = {
-          id: workout.id,
-          name: workout.ride?.title || workout.name || 'Untitled Workout',
-          duration: workout.ride?.duration || workout.duration || 0,
-          created_at: workout.created_at,
-          calories: workout.calories || 0,
-          fitness_discipline: workout.fitness_discipline,
-          instructor: workout.ride?.instructor || workout.instructor,
-          total_work: workout.total_work,
-          device_type: workout.device_type,
-          status: workout.status,
-          ride: workout.ride,
-        };
-        upsertWorkout(mappedWorkout);
-      } catch (error) {
-        console.error(`[DB] Failed to store workout ${workout.id}:`, error);
+        upsertWorkout(workout);
+      } catch (error: unknown) {
+        console.error(
+          `[DB] Failed to store workout ${workout.id}:`,
+          isError(error) ? error.message : 'Unknown error'
+        );
       }
     }
 
@@ -178,17 +268,17 @@ export class PelotonClient {
   }
 
   /**
-   * Get workouts directly from database (faster, offline-capable)
+   * Get workouts directly from database (faster, offline-capable).
    */
-  getWorkoutsFromDB(limit: number = 10): PelotonWorkout[] {
+  getWorkoutsFromDB(limit = 10): PelotonWorkout[] {
     return getRecentWorkoutsFromDB(limit);
   }
 
   /**
-   * Get user profile information
+   * Get user profile information.
    */
-  async getUserProfile(): Promise<any> {
-    const cacheKey = `profile_${this.userId}`;
+  async getUserProfile(): Promise<PelotonUserProfile> {
+    const cacheKey = `profile_${this.userId ?? 'unknown'}`;
     const config: AxiosRequestConfig = {
       method: 'GET',
       url: `${PELOTON_API_URL}/api/me`,
@@ -200,79 +290,89 @@ export class PelotonClient {
       },
     };
 
-    const response = await makeApiRequest<any>(config, 0, cacheKey);
+    const response = await makeApiRequest<unknown>(config, 0, cacheKey);
+    const parsed = PelotonMeResponseSchema.safeParse(response);
 
-    if (response && response.id) {
-      this.userId = response.id;
+    if (!parsed.success) {
+      throw new PelotonApiError(`Invalid /api/me response: ${parsed.error.message}`, 200, '/api/me');
     }
 
-    return response;
+    this.userId = parsed.data.id;
+    const profile: PelotonUserProfile = {
+      id: parsed.data.id,
+      username: parsed.data.username,
+      ...(parsed.data.total_workouts !== undefined
+        ? { total_workouts: parsed.data.total_workouts }
+        : {}),
+      ...(parsed.data.total_followers !== undefined
+        ? { total_followers: parsed.data.total_followers }
+        : {}),
+      ...(parsed.data.total_following !== undefined
+        ? { total_following: parsed.data.total_following }
+        : {}),
+      ...(parsed.data.created_at !== undefined ? { created_at: parsed.data.created_at } : {}),
+    };
+    return profile;
   }
 
   /**
-   * Search workouts by filters
-   * Checks DB first, falls back to API if DB is empty or data is stale
+   * Search workouts by filters.
+   * Checks DB first, falls back to API if DB is empty or data is stale.
    */
-  async searchWorkouts(params: {
-    discipline?: string;
-    instructor?: string;
-    startDate?: Date;
-    endDate?: Date;
-    limit?: number;
-  }): Promise<any[]> {
+  async searchWorkouts(params: WorkoutSearchParams): Promise<PelotonWorkout[]> {
     if (!this.userId) {
       await this.testConnection();
     }
 
-    // Check if we have data in DB
     const dbCount = getWorkoutCount();
-    let workouts: any[];
+    let workouts: PelotonWorkout[];
 
-    // Use DB for historical data (older than 30 min), API for recent data
     const now = Math.floor(Date.now() / 1000);
     const thirtyMinAgo = now - 1800;
 
     if (dbCount > 0 && (!params.startDate || params.startDate.getTime() / 1000 < thirtyMinAgo)) {
-      // Use DB for older data
       console.error(`[DB] Using database for workout search (${dbCount} workouts cached)`);
-      workouts = this.getWorkoutsFromDB(params.limit || 50);
+      workouts = this.getWorkoutsFromDB(params.limit ?? 50);
     } else {
-      // Use API for recent data or if DB is empty
-      workouts = await this.getRecentWorkouts(params.limit || 50);
+      workouts = await this.getRecentWorkouts(params.limit ?? 50);
     }
 
     let filtered = workouts;
 
     if (params.discipline) {
+      const disciplineFilter = params.discipline.toLowerCase();
       filtered = filtered.filter(
-        (w) => w.fitness_discipline?.toLowerCase() === params.discipline?.toLowerCase()
+        (workout) => workout.fitness_discipline.toLowerCase() === disciplineFilter
       );
     }
 
     if (params.instructor) {
-      filtered = filtered.filter((w) =>
-        w.ride?.instructor?.name?.toLowerCase().includes(params.instructor!.toLowerCase())
+      const instructorFilter = params.instructor.toLowerCase();
+      filtered = filtered.filter((workout) =>
+        (workout.ride?.instructor?.name ?? workout.instructor?.name ?? '')
+          .toLowerCase()
+          .includes(instructorFilter)
       );
     }
 
     if (params.startDate) {
       const startTimestamp = Math.floor(params.startDate.getTime() / 1000);
-      filtered = filtered.filter((w) => w.created_at >= startTimestamp);
+      filtered = filtered.filter((workout) => workout.created_at >= startTimestamp);
     }
 
     if (params.endDate) {
       const endTimestamp = Math.floor(params.endDate.getTime() / 1000);
-      filtered = filtered.filter((w) => w.created_at <= endTimestamp);
+      filtered = filtered.filter((workout) => workout.created_at <= endTimestamp);
     }
 
     return filtered;
   }
 
   /**
-   * Clear cache
+   * Clear cache.
    */
   static clearCache(): void {
-    Object.keys(cache).forEach((key) => delete cache[key]);
+    cache.clear();
     console.error('[Cache] Cleared all cached data');
   }
 }

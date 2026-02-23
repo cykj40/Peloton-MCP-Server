@@ -196,7 +196,10 @@ export function getInsightsByDiscipline(): DisciplineInsight[] {
     if (!byDiscipline[corr.discipline]) {
       byDiscipline[corr.discipline] = [];
     }
-    byDiscipline[corr.discipline].push(corr);
+    const disciplineCorrelations = byDiscipline[corr.discipline];
+    if (disciplineCorrelations) {
+      disciplineCorrelations.push(corr);
+    }
   }
 
   // Calculate insights for each discipline
