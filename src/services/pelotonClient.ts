@@ -14,6 +14,8 @@ import {
   PelotonWorkoutResponseSchema,
   PelotonWorkoutsListResponseSchema,
 } from '../schemas/api.js';
+import { loadToken, saveToken, isTokenExpired, PelotonAuthToken } from './tokenStore.js';
+import { refreshToken } from './pelotonAuth.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
@@ -165,6 +167,7 @@ export class PelotonClient {
   private sessionCookie: string | null;
   private bearerToken: string | null;
   private userId?: string;
+  private cachedToken: PelotonAuthToken | null = null;
 
   constructor(credential: string) {
     if (credential.startsWith('eyJ')) {
@@ -176,13 +179,50 @@ export class PelotonClient {
     }
   }
 
-  private getAuthHeaders(): Record<string, string> {
+  private async getAuthHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       'User-Agent': 'PelotonMCP/1.0',
       Accept: 'application/json',
       'peloton-platform': 'web',
     };
 
+    // 1. Try to load token from tokenStore
+    let token = this.cachedToken || await loadToken();
+
+    // 2. If token exists and NOT expired, use it
+    if (token && !isTokenExpired(token)) {
+      if (token.token_type === 'Bearer') {
+        headers['Authorization'] = `Bearer ${token.access_token}`;
+      } else {
+        headers['Cookie'] = `peloton_session_id=${token.access_token}`;
+      }
+      this.cachedToken = token;
+      return headers;
+    }
+
+    // 3. If token exists but expired, attempt refresh
+    if (token && isTokenExpired(token)) {
+      console.error('[Client] Token expired, attempting refresh...');
+      const username = process.env.PELOTON_USERNAME;
+      const password = process.env.PELOTON_PASSWORD;
+
+      const refreshedToken = await refreshToken(token, username, password);
+      if (refreshedToken) {
+        await saveToken(refreshedToken);
+        this.cachedToken = refreshedToken;
+
+        if (refreshedToken.token_type === 'Bearer') {
+          headers['Authorization'] = `Bearer ${refreshedToken.access_token}`;
+        } else {
+          headers['Cookie'] = `peloton_session_id=${refreshedToken.access_token}`;
+        }
+        return headers;
+      }
+
+      console.error('[Client] Token refresh failed, falling back to constructor credential');
+    }
+
+    // 4. If no token, fall back to cookie/bearer from constructor
     if (this.bearerToken) {
       headers['Authorization'] = `Bearer ${this.bearerToken}`;
     } else if (this.sessionCookie) {
@@ -200,7 +240,7 @@ export class PelotonClient {
       const config: AxiosRequestConfig = {
         method: 'GET',
         url: `${PELOTON_API_URL}/api/me`,
-        headers: this.getAuthHeaders(),
+        headers: await this.getAuthHeaders(),
       };
 
       const response = await makeApiRequest<unknown>(config);
@@ -250,7 +290,7 @@ export class PelotonClient {
         joins: 'ride,ride.instructor',
         sort_by: '-created',
       },
-      headers: this.getAuthHeaders(),
+      headers: await this.getAuthHeaders(),
     };
 
     const response = await makeApiRequest<unknown>(config, 0, cacheKey);
@@ -295,7 +335,7 @@ export class PelotonClient {
     const config: AxiosRequestConfig = {
       method: 'GET',
       url: `${PELOTON_API_URL}/api/me`,
-      headers: this.getAuthHeaders(),
+      headers: await this.getAuthHeaders(),
     };
 
     const response = await makeApiRequest<unknown>(config, 0, cacheKey);

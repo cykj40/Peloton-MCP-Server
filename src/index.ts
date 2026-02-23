@@ -29,7 +29,8 @@ import {
   CorrelationToolName,
 } from './tools/correlations.js';
 import { loadCookie, saveCookie } from './services/cookieStore.js';
-import { refreshPelotonCookie } from './services/pelotonAuth.js';
+import { refreshPelotonCookie, loginWithPassword } from './services/pelotonAuth.js';
+import { saveToken, PelotonAuthToken } from './services/tokenStore.js';
 import { runMigrations } from './db/migrations.js';
 import {
   ConnectionTestSchema,
@@ -50,9 +51,10 @@ let authFailureReason: string | null = null;
 const refreshCookieTool = {
   name: 'peloton_refresh_cookie' as const,
   description:
-    'Update the Peloton auth credential when the current one is expired or invalid. ' +
-    'Accepts either a Bearer token (JWT) or a legacy session cookie. ' +
-    'To get a Bearer token: log into members.onepeloton.com, open DevTools > Network tab, ' +
+    'Refresh the Peloton auth credential. If PELOTON_USERNAME and PELOTON_PASSWORD are set in env, ' +
+    'automatically logs in to get a fresh JWT Bearer token. Otherwise, accepts a manually provided ' +
+    'Bearer token (JWT) or legacy session cookie. ' +
+    'To get a Bearer token manually: log into members.onepeloton.com, open DevTools > Network tab, ' +
     'refresh the page, click any api.onepeloton.com request, find the Authorization header, ' +
     'and copy the token after "Bearer ".',
   inputSchema: {
@@ -60,10 +62,10 @@ const refreshCookieTool = {
     properties: {
       token: {
         type: 'string',
-        description: 'The Bearer token (JWT starting with eyJ...) or legacy session cookie value',
+        description: 'Optional: The Bearer token (JWT starting with eyJ...) or legacy session cookie value. If not provided, will use PELOTON_USERNAME and PELOTON_PASSWORD from env.',
       },
     },
-    required: ['token'],
+    required: [],
   },
 };
 
@@ -139,33 +141,78 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   if (name === 'peloton_refresh_cookie') {
     const parsed = args as { token?: string };
-    const newToken = parsed?.token;
-    if (!newToken || typeof newToken !== 'string' || newToken.trim().length === 0) {
-      return {
-        content: [{ type: 'text', text: 'Error: Please provide a non-empty token or cookie value.' }],
-      };
-    }
+    const manualToken = parsed?.token;
 
     try {
-      const credential = newToken.trim();
-      const testClient = new PelotonClient(credential);
-      const result = await testClient.testConnection();
-      if (!result.success) {
-        return {
-          content: [{ type: 'text', text: `Credential is invalid: ${result.details}\n\nMake sure you copied the full Bearer token (starts with eyJ...) from the Authorization header in DevTools > Network tab.` }],
+      let authToken: PelotonAuthToken;
+      let usedMethod: 'manual' | 'auto' = 'manual';
+
+      // If manual token provided, use it
+      if (manualToken && typeof manualToken === 'string' && manualToken.trim().length > 0) {
+        const credential = manualToken.trim();
+        const testClient = new PelotonClient(credential);
+        const result = await testClient.testConnection();
+        if (!result.success) {
+          return {
+            content: [{ type: 'text', text: `Credential is invalid: ${result.details}\n\nMake sure you copied the full Bearer token (starts with eyJ...) from the Authorization header in DevTools > Network tab.` }],
+          };
+        }
+
+        // Save as legacy cookie format for backward compatibility
+        await saveCookie(credential);
+        pelotonClient = testClient;
+        authFailureReason = null;
+
+        // Create token structure for display
+        const isBearer = credential.startsWith('eyJ');
+        authToken = {
+          access_token: credential,
+          token_type: isBearer ? 'Bearer' : 'Cookie',
+          expires_at: Date.now() + (isBearer ? 2 * 24 * 60 * 60 * 1000 : 25 * 24 * 60 * 60 * 1000),
+          user_id: result.userId ?? 'unknown',
         };
+        usedMethod = 'manual';
+      } else {
+        // Auto-refresh using env vars
+        const username = process.env.PELOTON_USERNAME;
+        const password = process.env.PELOTON_PASSWORD;
+
+        if (!username || !password) {
+          return {
+            content: [{ type: 'text', text: 'Error: No token provided and PELOTON_USERNAME/PELOTON_PASSWORD not set in environment.\n\nEither:\n1. Provide a token parameter, or\n2. Set PELOTON_USERNAME and PELOTON_PASSWORD in your .env file' }],
+          };
+        }
+
+        console.error('[Tool] Attempting auto-login with credentials from env...');
+        authToken = await loginWithPassword(username, password);
+        await saveToken(authToken);
+
+        // Also save to legacy cookie store for backward compatibility
+        await saveCookie(authToken.access_token);
+
+        pelotonClient = new PelotonClient(authToken.access_token);
+        authFailureReason = null;
+        usedMethod = 'auto';
       }
 
-      await saveCookie(credential);
-      pelotonClient = testClient;
-      authFailureReason = null;
-      const credType = credential.startsWith('eyJ') ? 'Bearer token' : 'Session cookie';
+      const expiresDate = new Date(authToken.expires_at).toLocaleString();
+      const authMethod = usedMethod === 'auto' ? 'Auto-login (JWT)' : authToken.token_type;
+      const fallbackNote = authToken.token_type === 'Cookie' ? ' (cookie fallback)' : '';
+
       return {
-        content: [{ type: 'text', text: `${credType} updated successfully! ${result.details}\n\nAll Peloton tools are now available.` }],
+        content: [{
+          type: 'text',
+          text: `Authentication refreshed successfully!\n\n` +
+            `Method: ${authMethod}${fallbackNote}\n` +
+            `Token Type: ${authToken.token_type}\n` +
+            `User ID: ${authToken.user_id}\n` +
+            `Expires: ${expiresDate}\n\n` +
+            `All Peloton tools are now available.`
+        }],
       };
     } catch (error: unknown) {
       return {
-        content: [{ type: 'text', text: `Failed to update credential: ${isError(error) ? error.message : 'Unknown error'}` }],
+        content: [{ type: 'text', text: `Failed to refresh authentication: ${isError(error) ? error.message : 'Unknown error'}` }],
       };
     }
   }
