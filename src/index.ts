@@ -11,14 +11,16 @@ import { PelotonClient } from './services/pelotonClient.js';
 import { profileTools, handleProfileTool } from './tools/profile.js';
 import { workoutTools, handleWorkoutTool } from './tools/workouts.js';
 import { analyticsTools, handleAnalyticsTool } from './tools/analytics.js';
+import { correlationTools, handleCorrelationTool } from './tools/correlations.js';
 import { loadCookie, saveCookie } from './services/cookieStore.js';
 import { refreshPelotonCookie } from './services/pelotonAuth.js';
+import { runMigrations } from './db/migrations.js';
 
 // Initialize Peloton client (will be set after authentication)
 let pelotonClient: PelotonClient | null = null;
 
 // Combine all tools
-const allTools = [...profileTools, ...workoutTools, ...analyticsTools];
+const allTools = [...profileTools, ...workoutTools, ...analyticsTools, ...correlationTools];
 
 // Create MCP server
 const server = new Server(
@@ -69,6 +71,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       return await handleAnalyticsTool(name, args || {}, pelotonClient);
     }
 
+    if (correlationTools.some((t) => t.name === name)) {
+      return await handleCorrelationTool(name, args || {}, pelotonClient);
+    }
+
     return {
       content: [
         {
@@ -92,6 +98,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start server
 async function main() {
   console.error('[Init] Peloton MCP Server starting...');
+
+  // Run database migrations
+  try {
+    runMigrations();
+  } catch (error) {
+    console.error('[Init] Failed to run database migrations:', error);
+    console.error('[Init] Continuing without database features...');
+  }
 
   // Try to load stored cookie first
   let sessionCookie = await loadCookie();

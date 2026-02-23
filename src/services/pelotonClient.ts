@@ -6,7 +6,8 @@ import {
   MAX_RETRY_DELAY,
   DEFAULT_CACHE_TTL,
 } from '../constants.js';
-import { CacheItem } from '../types/index.js';
+import { CacheItem, PelotonWorkout } from '../types/index.js';
+import { upsertWorkout, getRecentWorkoutsFromDB, getWorkoutCount } from '../db/queries.js';
 
 // In-memory cache
 const cache: Record<string, CacheItem> = {};
@@ -149,7 +150,38 @@ export class PelotonClient {
     };
 
     const response = await makeApiRequest<{ data: any[] }>(config, 0, cacheKey);
-    return response.data || [];
+    const workouts = response.data || [];
+
+    // Store workouts in database for correlation analysis
+    for (const workout of workouts) {
+      try {
+        const mappedWorkout: PelotonWorkout = {
+          id: workout.id,
+          name: workout.ride?.title || workout.name || 'Untitled Workout',
+          duration: workout.ride?.duration || workout.duration || 0,
+          created_at: workout.created_at,
+          calories: workout.calories || 0,
+          fitness_discipline: workout.fitness_discipline,
+          instructor: workout.ride?.instructor || workout.instructor,
+          total_work: workout.total_work,
+          device_type: workout.device_type,
+          status: workout.status,
+          ride: workout.ride,
+        };
+        upsertWorkout(mappedWorkout);
+      } catch (error) {
+        console.error(`[DB] Failed to store workout ${workout.id}:`, error);
+      }
+    }
+
+    return workouts;
+  }
+
+  /**
+   * Get workouts directly from database (faster, offline-capable)
+   */
+  getWorkoutsFromDB(limit: number = 10): PelotonWorkout[] {
+    return getRecentWorkoutsFromDB(limit);
   }
 
   /**
@@ -179,6 +211,7 @@ export class PelotonClient {
 
   /**
    * Search workouts by filters
+   * Checks DB first, falls back to API if DB is empty or data is stale
    */
   async searchWorkouts(params: {
     discipline?: string;
@@ -191,7 +224,22 @@ export class PelotonClient {
       await this.testConnection();
     }
 
-    const workouts = await this.getRecentWorkouts(params.limit || 50);
+    // Check if we have data in DB
+    const dbCount = getWorkoutCount();
+    let workouts: any[];
+
+    // Use DB for historical data (older than 30 min), API for recent data
+    const now = Math.floor(Date.now() / 1000);
+    const thirtyMinAgo = now - 1800;
+
+    if (dbCount > 0 && (!params.startDate || params.startDate.getTime() / 1000 < thirtyMinAgo)) {
+      // Use DB for older data
+      console.error(`[DB] Using database for workout search (${dbCount} workouts cached)`);
+      workouts = this.getWorkoutsFromDB(params.limit || 50);
+    } else {
+      // Use API for recent data or if DB is empty
+      workouts = await this.getRecentWorkouts(params.limit || 50);
+    }
 
     let filtered = workouts;
 
