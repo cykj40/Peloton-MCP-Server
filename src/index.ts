@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import 'dotenv/config';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -90,20 +91,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   console.error('[Init] Peloton MCP Server starting...');
 
-  // Get credentials from environment
-  const username = process.env.PELOTON_USERNAME;
-  const password = process.env.PELOTON_PASSWORD;
+  // Get session cookie from environment
+  const sessionCookie = process.env.PELOTON_SESSION_COOKIE;
 
-  if (!username || !password) {
-    console.error('[Init] Error: PELOTON_USERNAME and PELOTON_PASSWORD must be set');
+  if (!sessionCookie) {
+    console.error('[Init] Error: PELOTON_SESSION_COOKIE must be set in .env file');
+    console.error('[Init] See AUTH_UPDATE.md for instructions on getting your session cookie');
     process.exit(1);
   }
 
   try {
-    // Authenticate with Peloton
-    console.error('[Init] Authenticating...');
-    const sessionId = await PelotonClient.authenticate(username, password);
-    pelotonClient = new PelotonClient(sessionId);
+    console.error('[Init] Using session cookie from environment');
+    pelotonClient = new PelotonClient(sessionCookie);
 
     // Test connection
     const connectionTest = await pelotonClient.testConnection();

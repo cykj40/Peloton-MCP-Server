@@ -78,39 +78,6 @@ export class PelotonClient {
   }
 
   /**
-   * Authenticate and get a session cookie
-   */
-  static async authenticate(username: string, password: string): Promise<string> {
-    console.error('[Auth] Authenticating with Peloton...');
-
-    // Add jitter to prevent concurrent requests
-    const jitter = Math.floor(Math.random() * 2000);
-    await new Promise((resolve) => setTimeout(resolve, jitter));
-
-    const config: AxiosRequestConfig = {
-      method: 'POST',
-      url: `${PELOTON_API_URL}/auth/login`,
-      data: {
-        username_or_email: username,
-        password: password,
-      },
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'PelotonMCP/1.0',
-      },
-    };
-
-    const response = await makeApiRequest<{ session_id: string }>(config);
-
-    if (!response || !response.session_id) {
-      throw new Error('Failed to get session ID from Peloton');
-    }
-
-    console.error('[Auth] Successfully authenticated');
-    return response.session_id;
-  }
-
-  /**
    * Test the connection and get user ID
    */
   async testConnection(): Promise<{ success: boolean; details: string; userId?: string }> {
