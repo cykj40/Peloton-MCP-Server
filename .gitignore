@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+*.tsbuildinfo
+coverage/
+*.md
+!README.md
+*.tar.gz
+*.tar
+*.gz
+*.zip
+
+.claude/settings.local.json

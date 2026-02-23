@@ -1,0 +1,36 @@
+{
+  "name": "peloton-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server for Peloton workout data - diabetes management integration",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "peloton-mcp-server": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js",
+    "prepare": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "peloton",
+    "fitness",
+    "diabetes",
+    "t1d"
+  ],
+  "author": "Cyrus Jalili Khiabani",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "axios": "^1.7.2",
+    "express": "^4.21.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.6.3"
+  }
+}
