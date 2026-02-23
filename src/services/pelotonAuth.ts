@@ -1,129 +1,63 @@
-import { chromium } from 'playwright';
+import axios, { AxiosError } from 'axios';
+import { z } from 'zod';
+import { PELOTON_API_URL } from '../constants.js';
 import { isError, PelotonAuthError } from '../types/errors.js';
 
-export interface CDPCookie {
-  name: string;
-  value: string;
-  domain: string;
-  httpOnly: boolean;
-}
+const AuthLoginResponseSchema = z.object({
+  session_id: z.string().min(1),
+  user_id: z.string().optional(),
+});
 
-interface CDPGetAllCookiesResponse {
-  cookies: CDPCookie[];
-}
-
-function isCDPCookie(value: unknown): value is CDPCookie {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-
-  const cookie = value;
-  return (
-    'name' in cookie &&
-    typeof cookie.name === 'string' &&
-    'value' in cookie &&
-    typeof cookie.value === 'string' &&
-    'domain' in cookie &&
-    typeof cookie.domain === 'string' &&
-    'httpOnly' in cookie &&
-    typeof cookie.httpOnly === 'boolean'
-  );
-}
-
-function isCDPGetAllCookiesResponse(value: unknown): value is CDPGetAllCookiesResponse {
-  if (typeof value !== 'object' || value === null) {
-    return false;
-  }
-
-  if (!('cookies' in value) || !Array.isArray(value.cookies)) {
-    return false;
-  }
-
-  return value.cookies.every(isCDPCookie);
-}
+type AuthLoginResponse = z.infer<typeof AuthLoginResponseSchema>;
 
 /**
- * Refresh Peloton session cookie using Playwright headless browser.
+ * Refresh Peloton session cookie using the official login endpoint.
  */
 export async function refreshPelotonCookie(
   username: string,
   password: string
 ): Promise<string> {
-  console.error('[Auth] Starting Playwright browser for cookie refresh...');
-
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-gpu', '--no-sandbox'],
-  });
-
   try {
-    const context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      viewport: { width: 1280, height: 720 },
-    });
-
-    const page = await context.newPage();
-
-    try {
-      console.error('[Auth] Navigating to Peloton login page...');
-      await page.goto('https://members.onepeloton.com/login', {
-        waitUntil: 'networkidle',
-        timeout: 30000,
-      });
-
-      console.error('[Auth] Waiting for login form...');
-      await page.waitForSelector('input[name="usernameOrEmail"]', { timeout: 10000 });
-
-      console.error('[Auth] Entering credentials...');
-      await page.fill('input[name="usernameOrEmail"]', username);
-      await page.fill('input[name="password"]', password);
-
-      console.error('[Auth] Clicking login button...');
-      await page.click('button[type="submit"]');
-
-      console.error('[Auth] Waiting for login to complete...');
-      await page.waitForURL('**/home', { timeout: 15000 });
-
-      console.error('[Auth] Login successful, navigating to API to trigger session cookie...');
-      await page.goto('https://api.onepeloton.com/api/me', { timeout: 10000 });
-      await page.waitForTimeout(3000);
-
-      const client = await context.newCDPSession(page);
-      const cdpResponseRaw: unknown = await client.send('Network.getAllCookies');
-      if (!isCDPGetAllCookiesResponse(cdpResponseRaw)) {
-        throw new PelotonAuthError('Invalid cookie payload returned by CDP');
+    const response = await axios.post<unknown>(
+      `${PELOTON_API_URL}/auth/login`,
+      {
+        username_or_email: username,
+        password,
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'peloton-platform': 'web',
+          'User-Agent': 'PelotonMCP/1.0',
+        },
       }
+    );
 
-      const cdpResponse = cdpResponseRaw;
-      const cookies = cdpResponse.cookies;
+    const parsed = AuthLoginResponseSchema.safeParse(response.data);
+    if (!parsed.success) {
+      throw new PelotonAuthError(`Invalid auth response: ${parsed.error.message}`);
+    }
 
-      console.error(
-        '[Auth] All cookies (including HTTP-only):',
-        cookies.map((cookie) => `${cookie.name} (${cookie.domain})`).join(', ')
-      );
-
-      const sessionCookie = cookies.find((cookie) => cookie.name === 'peloton_session_id');
-
-      if (!sessionCookie) {
-        const foundCookies = cookies.map((cookie) => cookie.name).join(', ');
-        throw new PelotonAuthError(
-          `peloton_session_id cookie not found. Peloton may have changed their auth system. Found: ${foundCookies}`
-        );
-      }
-
-      console.error(
-        '[Auth] Successfully extracted session cookie (HTTP-only:',
-        sessionCookie.httpOnly,
-        ')'
-      );
-      return sessionCookie.value;
-    } catch (error: unknown) {
+    const authResponse: AuthLoginResponse = parsed.data;
+    console.error('[Auth] Successfully authenticated via /auth/login');
+    return authResponse.session_id;
+  } catch (error: unknown) {
+    const axiosError = error instanceof AxiosError ? error : null;
+    if (axiosError?.response) {
       throw new PelotonAuthError(
-        `Failed to refresh Peloton cookie: ${isError(error) ? error.message : 'Unknown error'}`,
+        `Auth login failed (${axiosError.response.status}): ${
+          typeof axiosError.response.data === 'string'
+            ? axiosError.response.data
+            : JSON.stringify(axiosError.response.data)
+        }`,
         error
       );
     }
-  } finally {
-    await browser.close();
+
+    throw new PelotonAuthError(
+      `Failed to refresh Peloton cookie: ${isError(error) ? error.message : 'Unknown error'}`,
+      error
+    );
   }
 }

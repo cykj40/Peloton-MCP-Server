@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
+import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { z } from 'zod';
 import { CookieStoreError, isError } from '../types/errors.js';
 
@@ -10,11 +10,8 @@ interface CookieData {
   createdAt: number;
 }
 
-// Get the directory of this file, then resolve to project root
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
-const COOKIE_FILE = path.join(PROJECT_ROOT, '.peloton-cookie.json');
+const COOKIE_DIR = path.join(process.env.APPDATA || os.homedir(), '.peloton');
+const COOKIE_FILE = path.join(COOKIE_DIR, 'cookie.json');
 const COOKIE_LIFETIME = 25 * 24 * 60 * 60 * 1000;
 const CookieDataSchema = z.object({
   value: z.string(),
@@ -78,6 +75,7 @@ export async function saveCookie(value: string): Promise<void> {
       createdAt: now,
     };
 
+    await fs.mkdir(COOKIE_DIR, { recursive: true });
     await fs.writeFile(COOKIE_FILE, JSON.stringify(cookieData, null, 2));
 
     const expiryDate = new Date(cookieData.expiresAt).toLocaleDateString();
