@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { z } from 'zod';
 import { CookieStoreError, isError } from '../types/errors.js';
 
@@ -9,7 +10,11 @@ interface CookieData {
   createdAt: number;
 }
 
-const COOKIE_FILE = path.join(process.cwd(), '.peloton-cookie.json');
+// Get the directory of this file, then resolve to project root
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '../..');
+const COOKIE_FILE = path.join(PROJECT_ROOT, '.peloton-cookie.json');
 const COOKIE_LIFETIME = 25 * 24 * 60 * 60 * 1000;
 const CookieDataSchema = z.object({
   value: z.string(),
