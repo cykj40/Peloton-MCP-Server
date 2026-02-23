@@ -162,11 +162,34 @@ async function makeApiRequest<T>(
 }
 
 export class PelotonClient {
-  private sessionCookie: string;
+  private sessionCookie: string | null;
+  private bearerToken: string | null;
   private userId?: string;
 
-  constructor(sessionCookie: string) {
-    this.sessionCookie = sessionCookie;
+  constructor(credential: string) {
+    if (credential.startsWith('eyJ')) {
+      this.bearerToken = credential;
+      this.sessionCookie = null;
+    } else {
+      this.sessionCookie = credential;
+      this.bearerToken = null;
+    }
+  }
+
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'User-Agent': 'PelotonMCP/1.0',
+      Accept: 'application/json',
+      'peloton-platform': 'web',
+    };
+
+    if (this.bearerToken) {
+      headers['Authorization'] = `Bearer ${this.bearerToken}`;
+    } else if (this.sessionCookie) {
+      headers['Cookie'] = `peloton_session_id=${this.sessionCookie}`;
+    }
+
+    return headers;
   }
 
   /**
@@ -177,12 +200,7 @@ export class PelotonClient {
       const config: AxiosRequestConfig = {
         method: 'GET',
         url: `${PELOTON_API_URL}/api/me`,
-        headers: {
-          Cookie: `peloton_session_id=${this.sessionCookie}`,
-          'User-Agent': 'PelotonMCP/1.0',
-          Accept: 'application/json',
-          'peloton-platform': 'web',
-        },
+        headers: this.getAuthHeaders(),
       };
 
       const response = await makeApiRequest<unknown>(config);
@@ -232,12 +250,7 @@ export class PelotonClient {
         joins: 'ride,ride.instructor',
         sort_by: '-created',
       },
-      headers: {
-        Cookie: `peloton_session_id=${this.sessionCookie}`,
-        'User-Agent': 'PelotonMCP/1.0',
-        Accept: 'application/json',
-        'peloton-platform': 'web',
-      },
+      headers: this.getAuthHeaders(),
     };
 
     const response = await makeApiRequest<unknown>(config, 0, cacheKey);
@@ -282,12 +295,7 @@ export class PelotonClient {
     const config: AxiosRequestConfig = {
       method: 'GET',
       url: `${PELOTON_API_URL}/api/me`,
-      headers: {
-        Cookie: `peloton_session_id=${this.sessionCookie}`,
-        'User-Agent': 'PelotonMCP/1.0',
-        Accept: 'application/json',
-        'peloton-platform': 'web',
-      },
+      headers: this.getAuthHeaders(),
     };
 
     const response = await makeApiRequest<unknown>(config, 0, cacheKey);

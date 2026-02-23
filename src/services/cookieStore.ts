@@ -8,15 +8,18 @@ interface CookieData {
   value: string;
   expiresAt: number;
   createdAt: number;
+  type?: 'cookie' | 'bearer';
 }
 
 const COOKIE_DIR = path.join(process.env.APPDATA || os.homedir(), '.peloton');
 const COOKIE_FILE = path.join(COOKIE_DIR, 'cookie.json');
 const COOKIE_LIFETIME = 25 * 24 * 60 * 60 * 1000;
+const BEARER_LIFETIME = 2 * 24 * 60 * 60 * 1000;
 const CookieDataSchema = z.object({
   value: z.string(),
   expiresAt: z.number(),
   createdAt: z.number(),
+  type: z.enum(['cookie', 'bearer']).optional(),
 });
 
 function isCookieData(value: unknown): value is CookieData {
@@ -67,12 +70,26 @@ export async function saveCookie(value: string): Promise<void> {
     throw new CookieStoreError('Cannot save empty cookie value');
   }
 
+  const isBearer = value.startsWith('eyJ');
+
   try {
     const now = Date.now();
+    let expiresAt = now + (isBearer ? BEARER_LIFETIME : COOKIE_LIFETIME);
+
+    if (isBearer) {
+      try {
+        const payload = JSON.parse(Buffer.from(value.split('.')[1] ?? '', 'base64url').toString());
+        if (typeof payload.exp === 'number') {
+          expiresAt = payload.exp * 1000;
+        }
+      } catch { /* use default expiry */ }
+    }
+
     const cookieData: CookieData = {
       value,
-      expiresAt: now + COOKIE_LIFETIME,
+      expiresAt,
       createdAt: now,
+      type: isBearer ? 'bearer' : 'cookie',
     };
 
     await fs.mkdir(COOKIE_DIR, { recursive: true });
