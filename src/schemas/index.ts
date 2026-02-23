@@ -1,5 +1,9 @@
 import { z } from 'zod';
 
+const DateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
+  message: 'Date must be in YYYY-MM-DD format',
+});
+
 export const WorkoutSearchSchema = z.object({
   limit: z.number()
     .int()
@@ -16,11 +20,11 @@ export const WorkoutSearchSchema = z.object({
     .optional()
     .describe("Filter by instructor name"),
 
-  start_date: z.string()
+  start_date: DateStringSchema
     .optional()
     .describe("Start date (YYYY-MM-DD) for glucose correlation"),
 
-  end_date: z.string()
+  end_date: DateStringSchema
     .optional()
     .describe("End date (YYYY-MM-DD)"),
 
@@ -38,11 +42,11 @@ export const MuscleAnalysisSchema = z.object({
 }).strict();
 
 export const WorkoutStatsSchema = z.object({
-  start_date: z.string()
+  start_date: DateStringSchema
     .optional()
     .describe("Start date (YYYY-MM-DD)"),
 
-  end_date: z.string()
+  end_date: DateStringSchema
     .optional()
     .describe("End date (YYYY-MM-DD)"),
 
