@@ -28,9 +28,8 @@ import {
   handleCorrelationTool,
   CorrelationToolName,
 } from './tools/correlations.js';
-import { loadCookie, saveCookie } from './services/cookieStore.js';
-import { refreshPelotonCookie, loginWithPassword } from './services/pelotonAuth.js';
-import { saveToken, PelotonAuthToken } from './services/tokenStore.js';
+import { loginWithPassword } from './services/pelotonAuth.js';
+import { loadToken, saveToken, PelotonAuthToken } from './services/tokenStore.js';
 import { runMigrations } from './db/migrations.js';
 import {
   ConnectionTestSchema,
@@ -48,28 +47,28 @@ import { ToolResponse } from './types/index.js';
 let pelotonClient: PelotonClient | null = null;
 let authFailureReason: string | null = null;
 
-const refreshCookieTool = {
-  name: 'peloton_refresh_cookie' as const,
+const refreshTokenTool = {
+  name: 'peloton_refresh_token' as const,
   description:
-    'Refresh the Peloton auth credential. If PELOTON_USERNAME and PELOTON_PASSWORD are set in env, ' +
+    'Refresh the Peloton JWT Bearer token. If PELOTON_USERNAME and PELOTON_PASSWORD are set in env, ' +
     'automatically logs in to get a fresh JWT Bearer token. Otherwise, accepts a manually provided ' +
-    'Bearer token (JWT) or legacy session cookie. ' +
+    'Bearer token (JWT). ' +
     'To get a Bearer token manually: log into members.onepeloton.com, open DevTools > Network tab, ' +
     'refresh the page, click any api.onepeloton.com request, find the Authorization header, ' +
-    'and copy the token after "Bearer ".',
+    'and copy the token after "Bearer ". Token must start with "eyJ".',
   inputSchema: {
     type: 'object' as const,
     properties: {
       token: {
         type: 'string',
-        description: 'Optional: The Bearer token (JWT starting with eyJ...) or legacy session cookie value. If not provided, will use PELOTON_USERNAME and PELOTON_PASSWORD from env.',
+        description: 'Optional: The Bearer JWT token (starts with eyJ...). If not provided, will use PELOTON_USERNAME and PELOTON_PASSWORD from env.',
       },
     },
     required: [],
   },
 };
 
-const allTools = [...profileTools, ...workoutTools, ...analyticsTools, ...correlationTools, refreshCookieTool];
+const allTools = [...profileTools, ...workoutTools, ...analyticsTools, ...correlationTools, refreshTokenTool];
 type ToolName = ProfileToolName | WorkoutToolName | AnalyticsToolName | CorrelationToolName;
 type ToolHandler = (args: unknown, client: PelotonClient) => Promise<ToolResponse>;
 
@@ -139,7 +138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
-  if (name === 'peloton_refresh_cookie') {
+  if (name === 'peloton_refresh_token') {
     const parsed = args as { token?: string };
     const manualToken = parsed?.token;
 
@@ -154,23 +153,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const result = await testClient.testConnection();
         if (!result.success) {
           return {
-            content: [{ type: 'text', text: `Credential is invalid: ${result.details}\n\nMake sure you copied the full Bearer token (starts with eyJ...) from the Authorization header in DevTools > Network tab.` }],
+            content: [{ type: 'text', text: `Bearer token is invalid: ${result.details}\n\nMake sure you copied the full Bearer token (starts with eyJ...) from the Authorization header in DevTools > Network tab.` }],
           };
         }
 
-        // Save as legacy cookie format for backward compatibility
-        await saveCookie(credential);
         pelotonClient = testClient;
         authFailureReason = null;
 
         // Create token structure for display
-        const isBearer = credential.startsWith('eyJ');
         authToken = {
           access_token: credential,
-          token_type: isBearer ? 'Bearer' : 'Cookie',
-          expires_at: Date.now() + (isBearer ? 2 * 24 * 60 * 60 * 1000 : 25 * 24 * 60 * 60 * 1000),
+          token_type: 'Bearer',
+          expires_at: Date.now() + (2 * 24 * 60 * 60 * 1000),
           user_id: result.userId ?? 'unknown',
         };
+        await saveToken(authToken);
         usedMethod = 'manual';
       } else {
         // Auto-refresh using env vars
@@ -187,23 +184,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         authToken = await loginWithPassword(username, password);
         await saveToken(authToken);
 
-        // Also save to legacy cookie store for backward compatibility
-        await saveCookie(authToken.access_token);
-
         pelotonClient = new PelotonClient(authToken.access_token);
         authFailureReason = null;
         usedMethod = 'auto';
       }
 
       const expiresDate = new Date(authToken.expires_at).toLocaleString();
-      const authMethod = usedMethod === 'auto' ? 'Auto-login (JWT)' : authToken.token_type;
-      const fallbackNote = authToken.token_type === 'Cookie' ? ' (cookie fallback)' : '';
+      const authMethod = usedMethod === 'auto' ? 'Auto-login' : 'Manual token';
 
       return {
         content: [{
           type: 'text',
           text: `Authentication refreshed successfully!\n\n` +
-            `Method: ${authMethod}${fallbackNote}\n` +
+            `Method: ${authMethod}\n` +
             `Token Type: ${authToken.token_type}\n` +
             `User ID: ${authToken.user_id}\n` +
             `Expires: ${expiresDate}\n\n` +
@@ -222,7 +215,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [
         {
           type: 'text',
-          text: `Error: Peloton client not connected. ${authFailureReason ?? 'Please check your credentials.'}\n\nTo fix this, use the peloton_refresh_cookie tool with a fresh session cookie from your browser.`,
+          text: `Error: Peloton client not connected. ${authFailureReason ?? 'Please check your credentials.'}\n\nTo fix this, use the peloton_refresh_token tool with a fresh JWT Bearer token from your browser.`,
         },
       ],
     };
@@ -263,86 +256,85 @@ async function main(): Promise<void> {
     console.error('[Init] Continuing without database features...');
   }
 
-  let sessionCookie = await loadCookie();
+  // Try to load stored token
+  let token = await loadToken();
 
-  if (!sessionCookie) {
-    console.error('[Init] No valid stored cookie found');
+  // If no token or token is expired, try to login with credentials
+  if (!token) {
+    console.error('[Init] No valid stored token found');
 
     const username = process.env.PELOTON_USERNAME;
     const password = process.env.PELOTON_PASSWORD;
 
     if (username && password) {
       try {
-        console.error('[Init] Attempting automatic cookie refresh...');
-        sessionCookie = await refreshPelotonCookie(username, password);
-        await saveCookie(sessionCookie);
-        console.error('[Init] Cookie refreshed and stored successfully');
+        console.error('[Init] Attempting automatic login...');
+        token = await loginWithPassword(username, password);
+        await saveToken(token);
+        console.error('[Init] Token obtained and stored successfully');
       } catch (error: unknown) {
-        console.error('[Init] Auto-refresh failed:', isError(error) ? error.message : 'Unknown error');
-        console.error('[Init] Falling back to manual cookie from .env...');
+        console.error('[Init] Auto-login failed:', isError(error) ? error.message : 'Unknown error');
       }
     }
 
-    if (!sessionCookie) {
-      sessionCookie = process.env.PELOTON_BEARER_TOKEN || process.env.PELOTON_SESSION_COOKIE || null;
-
-      if (!sessionCookie) {
-        console.error('[Init] No valid auth credential available');
-        console.error('[Init] Server will start in degraded mode — use peloton_refresh_cookie tool to provide a Bearer token');
-        authFailureReason = 'No auth credential available. Use the peloton_refresh_cookie tool with a Bearer token from your browser (DevTools > Network tab > Authorization header).';
-      } else {
-        const credType = sessionCookie.startsWith('eyJ') ? 'Bearer token' : 'session cookie';
-        console.error(`[Init] Using manual ${credType} from .env`);
-        await saveCookie(sessionCookie);
-      }
+    if (!token) {
+      console.error('[Init] No valid auth credential available');
+      console.error('[Init] Server will start in degraded mode — use peloton_refresh_token tool to provide a Bearer token');
+      authFailureReason = 'No auth credential available. Use the peloton_refresh_token tool with a Bearer token from your browser (DevTools > Network tab > Authorization header).';
     }
   }
 
-  if (sessionCookie) {
-    pelotonClient = new PelotonClient(sessionCookie);
+  if (token) {
+    try {
+      pelotonClient = new PelotonClient(token.access_token);
 
-    const connectionTest = await pelotonClient.testConnection();
-    if (!connectionTest.success) {
-      console.error(`[Init] Connection test failed: ${connectionTest.details}`);
+      const connectionTest = await pelotonClient.testConnection();
+      if (!connectionTest.success) {
+        console.error(`[Init] Connection test failed: ${connectionTest.details}`);
 
-      const username = process.env.PELOTON_USERNAME;
-      const password = process.env.PELOTON_PASSWORD;
+        const username = process.env.PELOTON_USERNAME;
+        const password = process.env.PELOTON_PASSWORD;
 
-      if (username && password) {
-        console.error('[Init] Attempting cookie refresh due to connection failure...');
-        try {
-          sessionCookie = await refreshPelotonCookie(username, password);
-          await saveCookie(sessionCookie);
-          pelotonClient = new PelotonClient(sessionCookie);
+        if (username && password) {
+          console.error('[Init] Attempting login due to connection failure...');
+          try {
+            token = await loginWithPassword(username, password);
+            await saveToken(token);
+            pelotonClient = new PelotonClient(token.access_token);
 
-          const retryTest = await pelotonClient.testConnection();
-          if (!retryTest.success) {
-            console.error('[Init] Connection still failed after refresh');
-            authFailureReason = retryTest.details;
+            const retryTest = await pelotonClient.testConnection();
+            if (!retryTest.success) {
+              console.error('[Init] Connection still failed after refresh');
+              authFailureReason = retryTest.details;
+              pelotonClient = null;
+            } else {
+              console.error('[Init] Connection successful after refresh');
+            }
+          } catch (refreshError: unknown) {
+            const msg = isError(refreshError) ? refreshError.message : 'Unknown error';
+            console.error('[Init] Login failed:', msg);
+            authFailureReason = `Token is invalid and auto-login failed: ${msg}`;
             pelotonClient = null;
-          } else {
-            console.error('[Init] Connection successful after refresh');
           }
-        } catch (refreshError: unknown) {
-          const msg = isError(refreshError) ? refreshError.message : 'Unknown error';
-          console.error('[Init] Refresh failed:', msg);
-          authFailureReason = `Session cookie is invalid and auto-refresh failed: ${msg}`;
+        } else {
+          authFailureReason = `Token is invalid and no credentials available for auto-login. Please use the peloton_refresh_token tool.`;
           pelotonClient = null;
         }
       } else {
-        authFailureReason = `Session cookie is invalid (401). Peloton's /auth/login endpoint is blocked, so auto-refresh won't work. Please provide a fresh cookie using the peloton_refresh_cookie tool.`;
-        pelotonClient = null;
+        console.error(`[Init] ${connectionTest.details}`);
       }
-    } else {
-      console.error(`[Init] ${connectionTest.details}`);
+    } catch (error: unknown) {
+      console.error('[Init] Failed to create client:', isError(error) ? error.message : 'Unknown error');
+      authFailureReason = isError(error) ? error.message : 'Unknown error';
+      pelotonClient = null;
     }
   }
 
   if (pelotonClient) {
     console.error(`[Init] Registered ${allTools.length} tools (all active)`);
   } else {
-    console.error(`[Init] Starting in degraded mode — auth failed. Use peloton_refresh_cookie tool to provide a valid session cookie.`);
-    console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_cookie active, others will return auth error)`);
+    console.error(`[Init] Starting in degraded mode — auth failed. Use peloton_refresh_token tool to provide a valid Bearer token.`);
+    console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_token active, others will return auth error)`);
   }
 
   try {

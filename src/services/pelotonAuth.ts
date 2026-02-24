@@ -1,15 +1,7 @@
 import axios, { AxiosError } from 'axios';
-import { z } from 'zod';
 import { PELOTON_API_URL } from '../constants.js';
 import { isError, PelotonAuthError } from '../types/errors.js';
 import { PelotonAuthToken } from './tokenStore.js';
-
-const AuthLoginResponseSchema = z.object({
-  session_id: z.string().min(1),
-  user_id: z.string().optional(),
-});
-
-type AuthLoginResponse = z.infer<typeof AuthLoginResponseSchema>;
 
 /**
  * Parse JWT to extract expiration time.
@@ -29,7 +21,7 @@ function parseJwtExpiry(token: string): number {
 
 /**
  * Login with password and return JWT Bearer token.
- * Falls back to session cookie if JWT is not available.
+ * Peloton uses Auth0 and returns JWT tokens via the Authorization header.
  */
 export async function loginWithPassword(
   username: string,
@@ -54,37 +46,24 @@ export async function loginWithPassword(
 
     // Check if response has Authorization header with Bearer token
     const authHeader = response.headers['authorization'] as string | undefined;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      const bearerToken = authHeader.substring(7);
-      const userId = typeof response.data === 'object' && response.data !== null && 'user_id' in response.data
-        ? String((response.data as { user_id?: string }).user_id)
-        : 'unknown';
-
-      console.error('[Auth] Successfully authenticated via JWT Bearer token');
-
-      return {
-        access_token: bearerToken,
-        token_type: 'Bearer',
-        expires_at: parseJwtExpiry(bearerToken),
-        user_id: userId,
-      };
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new PelotonAuthError(
+        'Auth response missing Bearer token in Authorization header. Peloton API may have changed.'
+      );
     }
 
-    // Fallback: try to parse as legacy session cookie response
-    const parsed = AuthLoginResponseSchema.safeParse(response.data);
-    if (!parsed.success) {
-      throw new PelotonAuthError(`Invalid auth response: ${parsed.error.message}`);
-    }
+    const bearerToken = authHeader.substring(7);
+    const userId = typeof response.data === 'object' && response.data !== null && 'user_id' in response.data
+      ? String((response.data as { user_id?: string }).user_id)
+      : 'unknown';
 
-    const authResponse: AuthLoginResponse = parsed.data;
-    console.error('[Auth] Successfully authenticated via session cookie (fallback)');
+    console.error('[Auth] Successfully authenticated via JWT Bearer token');
 
-    // Return session cookie as a token-like structure
     return {
-      access_token: authResponse.session_id,
-      token_type: 'Cookie',
-      expires_at: Date.now() + (25 * 24 * 60 * 60 * 1000), // 25 days
-      user_id: authResponse.user_id ?? 'unknown',
+      access_token: bearerToken,
+      token_type: 'Bearer',
+      expires_at: parseJwtExpiry(bearerToken),
+      user_id: userId,
     };
   } catch (error: unknown) {
     const axiosError = error instanceof AxiosError ? error : null;
@@ -168,14 +147,3 @@ export async function refreshToken(
   return null;
 }
 
-/**
- * Legacy function: Refresh Peloton session cookie using the official login endpoint.
- * @deprecated Use loginWithPassword instead
- */
-export async function refreshPelotonCookie(
-  username: string,
-  password: string
-): Promise<string> {
-  const token = await loginWithPassword(username, password);
-  return token.access_token;
-}

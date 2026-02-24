@@ -165,19 +165,18 @@ async function makeApiRequest<T>(
 }
 
 export class PelotonClient {
-  private sessionCookie: string | null;
-  private bearerToken: string | null;
+  private bearerToken: string;
   private userId?: string;
   private cachedToken: PelotonAuthToken | null = null;
 
   constructor(credential: string) {
-    if (credential.startsWith('eyJ')) {
-      this.bearerToken = credential;
-      this.sessionCookie = null;
-    } else {
-      this.sessionCookie = credential;
-      this.bearerToken = null;
+    if (!credential.startsWith('eyJ')) {
+      throw new PelotonAuthError(
+        'PelotonClient only accepts JWT Bearer tokens. Session cookies are no longer supported. ' +
+        'Credential must start with "eyJ".'
+      );
     }
+    this.bearerToken = credential;
   }
 
   private async getAuthHeaders(): Promise<Record<string, string>> {
@@ -192,11 +191,7 @@ export class PelotonClient {
 
     // 2. If token exists and NOT expired, use it
     if (token && !isTokenExpired(token)) {
-      if (token.token_type === 'Bearer') {
-        headers['Authorization'] = `Bearer ${token.access_token}`;
-      } else {
-        headers['Cookie'] = `peloton_session_id=${token.access_token}`;
-      }
+      headers['Authorization'] = `Bearer ${token.access_token}`;
       this.cachedToken = token;
       return headers;
     }
@@ -211,24 +206,15 @@ export class PelotonClient {
       if (refreshedToken) {
         await saveToken(refreshedToken);
         this.cachedToken = refreshedToken;
-
-        if (refreshedToken.token_type === 'Bearer') {
-          headers['Authorization'] = `Bearer ${refreshedToken.access_token}`;
-        } else {
-          headers['Cookie'] = `peloton_session_id=${refreshedToken.access_token}`;
-        }
+        headers['Authorization'] = `Bearer ${refreshedToken.access_token}`;
         return headers;
       }
 
       console.error('[Client] Token refresh failed, falling back to constructor credential');
     }
 
-    // 4. If no token, fall back to cookie/bearer from constructor
-    if (this.bearerToken) {
-      headers['Authorization'] = `Bearer ${this.bearerToken}`;
-    } else if (this.sessionCookie) {
-      headers['Cookie'] = `peloton_session_id=${this.sessionCookie}`;
-    }
+    // 4. If no token, fall back to bearer from constructor
+    headers['Authorization'] = `Bearer ${this.bearerToken}`;
 
     return headers;
   }
