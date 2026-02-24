@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { handleAnalyticsTool } from '../../tools/analytics.js';
 import { makeMockWorkout } from '../fixtures.js';
 
@@ -9,7 +10,7 @@ describe('handleAnalyticsTool', () => {
 
   it('handles peloton_muscle_activity markdown and json', async () => {
     const client = {
-      getRecentWorkouts: jest.fn().mockResolvedValue(workouts),
+      getRecentWorkouts: vi.fn().mockResolvedValue(workouts),
     } as unknown as Parameters<typeof handleAnalyticsTool>[2];
 
     const markdown = await handleAnalyticsTool(
@@ -30,7 +31,7 @@ describe('handleAnalyticsTool', () => {
 
   it('handles peloton_muscle_impact markdown and json', async () => {
     const client = {
-      getRecentWorkouts: jest.fn().mockResolvedValue(workouts),
+      getRecentWorkouts: vi.fn().mockResolvedValue(workouts),
     } as unknown as Parameters<typeof handleAnalyticsTool>[2];
 
     const markdown = await handleAnalyticsTool(
@@ -51,7 +52,7 @@ describe('handleAnalyticsTool', () => {
 
   it('handles peloton_workout_stats markdown and json', async () => {
     const client = {
-      getRecentWorkouts: jest.fn().mockResolvedValue(workouts),
+      getRecentWorkouts: vi.fn().mockResolvedValue(workouts),
     } as unknown as Parameters<typeof handleAnalyticsTool>[2];
 
     const markdown = await handleAnalyticsTool(
@@ -72,7 +73,7 @@ describe('handleAnalyticsTool', () => {
 
   it('handles peloton_training_balance markdown and json', async () => {
     const client = {
-      getRecentWorkouts: jest.fn().mockResolvedValue(workouts),
+      getRecentWorkouts: vi.fn().mockResolvedValue(workouts),
     } as unknown as Parameters<typeof handleAnalyticsTool>[2];
 
     const markdown = await handleAnalyticsTool(
@@ -93,7 +94,7 @@ describe('handleAnalyticsTool', () => {
 
   it('handles empty workouts for all tools', async () => {
     const client = {
-      getRecentWorkouts: jest.fn().mockResolvedValue([]),
+      getRecentWorkouts: vi.fn().mockResolvedValue([]),
     } as unknown as Parameters<typeof handleAnalyticsTool>[2];
 
     const activity = await handleAnalyticsTool(

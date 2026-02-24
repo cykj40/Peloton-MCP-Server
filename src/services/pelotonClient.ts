@@ -55,11 +55,12 @@ function getRetryAfterHeaderValue(axiosError: AxiosError): string | undefined {
 }
 
 function mapWorkout(rawWorkout: PelotonWorkoutResponse): PelotonWorkout {
+  const normalizedDuration = rawWorkout.ride?.duration ?? rawWorkout.duration ?? 0;
   const instructor = rawWorkout.ride?.instructor ?? rawWorkout.instructor;
   const ride = rawWorkout.ride
     ? {
         title: rawWorkout.ride.title ?? rawWorkout.name ?? 'Untitled Workout',
-        duration: rawWorkout.ride.duration ?? rawWorkout.duration,
+        duration: normalizedDuration,
         ...(rawWorkout.ride.instructor ? { instructor: rawWorkout.ride.instructor } : {}),
       }
     : undefined;
@@ -67,7 +68,7 @@ function mapWorkout(rawWorkout: PelotonWorkoutResponse): PelotonWorkout {
   return {
     id: rawWorkout.id,
     name: rawWorkout.ride?.title ?? rawWorkout.name ?? 'Untitled Workout',
-    duration: rawWorkout.ride?.duration ?? rawWorkout.duration,
+    duration: normalizedDuration,
     created_at: rawWorkout.created_at,
     calories: rawWorkout.calories ?? 0,
     fitness_discipline: rawWorkout.fitness_discipline,

@@ -1,10 +1,11 @@
+import { vi } from 'vitest';
 import { handleProfileTool } from '../../tools/profile.js';
 
 describe('handleProfileTool', () => {
   it('returns OK for successful test connection', async () => {
     const client = {
-      testConnection: jest.fn().mockResolvedValue({ success: true, details: 'Connected', userId: 'u1' }),
-      getUserProfile: jest.fn(),
+      testConnection: vi.fn().mockResolvedValue({ success: true, details: 'Connected', userId: 'u1' }),
+      getUserProfile: vi.fn(),
     } as unknown as Parameters<typeof handleProfileTool>[2];
 
     const result = await handleProfileTool('peloton_test_connection', {}, client);
@@ -13,8 +14,8 @@ describe('handleProfileTool', () => {
 
   it('returns ERROR for failed test connection', async () => {
     const client = {
-      testConnection: jest.fn().mockResolvedValue({ success: false, details: 'Failed' }),
-      getUserProfile: jest.fn(),
+      testConnection: vi.fn().mockResolvedValue({ success: false, details: 'Failed' }),
+      getUserProfile: vi.fn(),
     } as unknown as Parameters<typeof handleProfileTool>[2];
 
     const result = await handleProfileTool('peloton_test_connection', {}, client);
@@ -23,8 +24,8 @@ describe('handleProfileTool', () => {
 
   it('returns markdown profile', async () => {
     const client = {
-      testConnection: jest.fn(),
-      getUserProfile: jest.fn().mockResolvedValue({
+      testConnection: vi.fn(),
+      getUserProfile: vi.fn().mockResolvedValue({
         id: 'u1',
         username: 'testuser',
         total_workouts: 123,
@@ -41,8 +42,8 @@ describe('handleProfileTool', () => {
 
   it('returns json profile', async () => {
     const client = {
-      testConnection: jest.fn(),
-      getUserProfile: jest.fn().mockResolvedValue({
+      testConnection: vi.fn(),
+      getUserProfile: vi.fn().mockResolvedValue({
         id: 'u1',
         username: 'testuser',
         total_workouts: 123,

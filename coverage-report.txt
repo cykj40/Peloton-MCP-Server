@@ -1,0 +1,369 @@
+
+> peloton-mcp-server@1.0.0 test:coverage
+> vitest run --coverage
+
+
+[1m[46m RUN [49m[22m [36mv4.0.18 [39m[90mC:/Users/cyrus/Documents/github/Peloton-MCP-Server[39m
+      [2mCoverage enabled with [22m[33mv8[39m
+
+[90mstderr[2m | src/__tests__/analytics.test.ts[2m > [22m[2manalytics service[2m > [22m[2mcalculateMuscleImpact[2m > [22m[2mfalls back for unknown discipline
+[22m[39m[Analytics] Unknown discipline "unknown", using full-body fallback
+
+[90mstderr[2m | src/__tests__/analytics.test.ts[2m > [22m[2manalytics service[2m > [22m[2mcalculateMuscleActivity[2m > [22m[2mfilters by period, excludes non-visual muscles, and sums to ~100
+[22m[39m[Analytics] Unknown discipline "unknown", using full-body fallback
+
+ [32m✓[39m src/__tests__/schemas.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 31[2mms[22m[39m
+ [32m✓[39m src/__tests__/tools/profile.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m src/__tests__/analytics.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 26[2mms[22m[39m
+ [32m✓[39m src/__tests__/tools/analytics.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 18[2mms[22m[39m
+ [32m✓[39m src/__tests__/tools/workouts.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 60[2mms[22m[39m
+[90mstderr[2m | src/__tests__/correlationService.test.ts[2m > [22m[2mcorrelationService[2m > [22m[2manalyzes workout glucose impact fields correctly
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-auzl3S\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mupsertWorkout inserts then updates one record
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-ZHOHqv\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_sync_workouts calls client and returns count message
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-156TbG\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/correlationService.test.ts[2m > [22m[2mcorrelationService[2m > [22m[2manalyzes workout glucose impact fields correctly
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mupsertWorkout inserts then updates one record
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_sync_workouts calls client and returns count message
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutsByDateRange returns workouts in range
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-nXEtjX\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/correlationService.test.ts[2m > [22m[2mcorrelationService[2m > [22m[2mgroups insights by discipline with risk levels
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-2fW5Dt\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_analyze_glucose_correlation returns error for missing workout
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-U0N8XK\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutsByDateRange returns workouts in range
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/correlationService.test.ts[2m > [22m[2mcorrelationService[2m > [22m[2mgroups insights by discipline with risk levels
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_analyze_glucose_correlation returns error for missing workout
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutById handles found and not found
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-A5N9b9\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/correlationService.test.ts[2m > [22m[2mcorrelationService[2m > [22m[2mdetects delayed hypoglycemia with severity classification
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-N35tjd\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutById handles found and not found
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_analyze_glucose_correlation returns correlation for existing workout
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-zTDXeB\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/correlationService.test.ts[2m > [22m[2mcorrelationService[2m > [22m[2mdetects delayed hypoglycemia with severity classification
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_analyze_glucose_correlation returns correlation for existing workout
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutCount increments on insert
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-1gYMqf\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutCount increments on insert
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_get_discipline_insights returns data in both formats
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-fIK2Kd\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+ [32m✓[39m src/__tests__/correlationService.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 92[2mms[22m[39m
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_get_discipline_insights returns data in both formats
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetRecentWorkoutsFromDB orders newest first and respects limit
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-sKYiu1\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetRecentWorkoutsFromDB orders newest first and respects limit
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_detect_hypoglycemia_risk returns alerts
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-Eoc4s4\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutsByDiscipline filters by discipline
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-c3Vrsu\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mgetWorkoutsByDiscipline filters by discipline
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mupsertMuscleSnapshot and getMuscleSnapshot round-trip and expire correctly
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-UNumI0\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mupsertMuscleSnapshot and getMuscleSnapshot round-trip and expire correctly
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/tools/correlations.test.ts[2m > [22m[2mhandleCorrelationTool[2m > [22m[2mpeloton_detect_hypoglycemia_risk returns alerts
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mglucose correlation CRUD lifecycle works
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-QufB9U\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+
+ [32m✓[39m src/__tests__/tools/correlations.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 167[2mms[22m[39m
+[90mstderr[2m | src/__tests__/queries.test.ts[2m > [22m[2mdb queries[2m > [22m[2mglucose correlation CRUD lifecycle works
+[22m[39m[DB] Database connection closed
+
+ [32m✓[39m src/__tests__/queries.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 184[2mms[22m[39m
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection success path
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-FbWVoB\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+[Cache] Cleared all cached data
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection success path
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection success path
+[22m[39m[API] GET https://api.onepeloton.com/api/me
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection success path
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection failure path
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-eozpzG\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+[Cache] Cleared all cached data
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection failure path
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection failure path
+[22m[39m[API] GET https://api.onepeloton.com/api/me
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mtestConnection failure path
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts maps and stores workouts in DB
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-M073W8\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+[Cache] Cleared all cached data
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts maps and stores workouts in DB
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts maps and stores workouts in DB
+[22m[39m[API] GET https://api.onepeloton.com/api/me
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts maps and stores workouts in DB
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts maps and stores workouts in DB
+[22m[39m[API] GET https://api.onepeloton.com/api/user/user123/workouts
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts maps and stores workouts in DB
+[22m[39m[Cache] Stored: workouts_user123_10
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts maps and stores workouts in DB
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-08Tun7\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+[Cache] Cleared all cached data
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[API] GET https://api.onepeloton.com/api/me
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[API] GET https://api.onepeloton.com/api/user/user123/workouts
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[API] Rate limited. Retrying in 1000ms (Attempt 1/3)
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[API] GET https://api.onepeloton.com/api/user/user123/workouts
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[Cache] Stored: workouts_user123_10
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetRecentWorkouts retries after rate limit
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetUserProfile returns mapped profile
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-8Vj7N2\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+[Cache] Cleared all cached data
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetUserProfile returns mapped profile
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetUserProfile returns mapped profile
+[22m[39m[API] GET https://api.onepeloton.com/api/me
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetUserProfile returns mapped profile
+[22m[39m[Cache] Stored: profile_unknown
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mgetUserProfile returns mapped profile
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2msearchWorkouts applies discipline filtering on DB data
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-o2l92M\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+[Cache] Cleared all cached data
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2msearchWorkouts applies discipline filtering on DB data
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2msearchWorkouts applies discipline filtering on DB data
+[22m[39m[API] GET https://api.onepeloton.com/api/me
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2msearchWorkouts applies discipline filtering on DB data
+[22m[39m[DB] Using database for workout search (2 workouts cached)
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2msearchWorkouts applies discipline filtering on DB data
+[22m[39m[DB] Database connection closed
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[DB] Connected to SQLite database: C:\Users\cyrus\AppData\Local\Temp\peloton-mcp-test-aTCSVd\test.db
+[Migrations] Running database migrations...
+[Migrations] ✅ Database migrations completed
+[DB] Current data: 0 workouts, 0 correlations
+[Cache] Cleared all cached data
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[API] GET https://api.onepeloton.com/api/me
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[API] GET https://api.onepeloton.com/api/user/user123/workouts
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[Cache] Stored: workouts_user123_5
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[Token] No stored token file found
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[Cache] Hit for: workouts_user123_5
+
+[90mstderr[2m | src/__tests__/pelotonClient.test.ts[2m > [22m[2mPelotonClient[2m > [22m[2mcache behavior avoids repeated HTTP for same workouts endpoint
+[22m[39m[DB] Database connection closed
+
+ [32m✓[39m src/__tests__/pelotonClient.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 1434[2mms[22m[39m
+     [33m[2m✓[22m[39m getRecentWorkouts retries after rate limit [33m 1125[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m9 passed[39m[22m[90m (9)[39m
+[2m      Tests [22m [1m[32m55 passed[39m[22m[90m (55)[39m
+[2m   Start at [22m 10:16:27
+[2m   Duration [22m 2.79s[2m (transform 1.33s, setup 0ms, import 3.22s, tests 2.03s, environment 4ms)[22m
+
+[34m % [39m[2mCoverage report from [22m[33mv8[39m
+-------------------|---------|----------|---------|---------|-------------------
+File               | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s 
+-------------------|---------|----------|---------|---------|-------------------
+All files          |   74.92 |    55.91 |   82.53 |   74.75 |                   
+ src               |     100 |      100 |     100 |     100 |                   
+  constants.ts     |     100 |      100 |     100 |     100 |                   
+ src/__tests__     |     100 |       75 |     100 |     100 |                   
+  fixtures.ts      |     100 |      100 |     100 |     100 |                   
+  testDb.ts        |     100 |       75 |     100 |     100 | 18                
+ src/db            |   90.56 |       67 |   95.45 |   90.56 |                   
+  database.ts      |      80 |       75 |   66.66 |      80 | 27-28,63-65       
+  migrations.ts    |     100 |       50 |     100 |     100 | 102-103           
+  queries.ts       |    91.3 |    67.04 |     100 |    91.3 | ...64,305,332,353 
+ src/schemas       |     100 |      100 |     100 |     100 |                   
+  api.ts           |     100 |      100 |     100 |     100 |                   
+  db.ts            |     100 |      100 |     100 |     100 |                   
+  index.ts         |     100 |      100 |     100 |     100 |                   
+ src/services      |   65.74 |    51.12 |      80 |   65.22 |                   
+  analytics.ts     |   96.03 |    84.05 |     100 |   95.69 | 23,100,137,239    
+  cookieStore.ts   |       0 |        0 |       0 |       0 | 14-119            
+  ...ionService.ts |   95.23 |     78.4 |     100 |   95.79 | ...06,161,282,324 
+  pelotonAuth.ts   |    2.32 |        0 |       0 |    2.32 | 18-180            
+  pelotonClient.ts |   69.33 |    51.82 |   83.33 |   70.54 | ...08-409,413-414 
+  tokenStore.ts    |   26.31 |    21.42 |      20 |   26.31 | ...7-51,61,70-107 
+ src/tools         |   83.19 |    61.48 |   88.88 |   83.04 |                   
+  analytics.ts     |   98.75 |    79.41 |     100 |   98.66 | 245               
+  correlations.ts  |   69.23 |    42.62 |   77.77 |    68.8 | ...52,297-300,329 
+  profile.ts       |   92.85 |    81.25 |     100 |   92.85 | 104               
+  workouts.ts      |    90.9 |    70.83 |     100 |   90.62 | 58,74,144         
+ src/types         |   27.77 |        0 |   33.33 |   29.41 |                   
+  errors.ts        |   35.71 |      100 |      40 |   35.71 | 2-4,20-29         
+  index.ts         |       0 |        0 |       0 |       0 | 83-85             
+-------------------|---------|----------|---------|---------|-------------------
+ERROR: Coverage for lines (74.75%) does not meet global threshold (85%)
+ERROR: Coverage for functions (82.53%) does not meet global threshold (90%)
+ERROR: Coverage for statements (74.92%) does not meet global threshold (85%)
+ERROR: Coverage for branches (55.91%) does not meet global threshold (80%)

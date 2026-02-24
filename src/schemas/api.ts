@@ -17,14 +17,14 @@ export const PelotonMeResponseSchema = z.object({
 export const PelotonWorkoutResponseSchema = z.object({
   id: z.string(),
   fitness_discipline: z.string(),
-  duration: z.number(),
+  duration: z.number().optional().default(0),
   created_at: z.number(),
   total_work: z.number().optional(),
   calories: z.number().optional(),
   status: z.string().optional(),
   ride: z.object({
     title: z.string().optional(),
-    duration: z.number().optional(),
+    duration: z.number().optional().default(0),
     instructor: PelotonInstructorSchema.optional(),
   }).optional(),
   instructor: PelotonInstructorSchema.optional(),

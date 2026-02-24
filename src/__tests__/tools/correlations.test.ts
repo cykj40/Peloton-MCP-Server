@@ -1,3 +1,4 @@
+import { vi } from 'vitest';
 import { handleCorrelationTool } from '../../tools/correlations.js';
 import { insertGlucoseCorrelation, upsertWorkout } from '../../db/queries.js';
 import { makeMockWorkout } from '../fixtures.js';
@@ -14,7 +15,7 @@ describe('handleCorrelationTool', () => {
 
   it('peloton_sync_workouts calls client and returns count message', async () => {
     const client = {
-      getRecentWorkouts: jest.fn().mockResolvedValue([makeMockWorkout({ id: 'sync-1' })]),
+      getRecentWorkouts: vi.fn().mockResolvedValue([makeMockWorkout({ id: 'sync-1' })]),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
 
     const result = await handleCorrelationTool('peloton_sync_workouts', { limit: 1 }, client);
@@ -24,7 +25,7 @@ describe('handleCorrelationTool', () => {
 
   it('peloton_analyze_glucose_correlation returns error for missing workout', async () => {
     const client = {
-      getRecentWorkouts: jest.fn(),
+      getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
 
     const result = await handleCorrelationTool(
@@ -44,7 +45,7 @@ describe('handleCorrelationTool', () => {
     const workout = makeMockWorkout({ id: 'corr-1', created_at: 1_700_000_000, duration: 1800 });
     upsertWorkout(workout);
     const client = {
-      getRecentWorkouts: jest.fn(),
+      getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
 
     const result = await handleCorrelationTool(
@@ -84,7 +85,7 @@ describe('handleCorrelationTool', () => {
     });
 
     const client = {
-      getRecentWorkouts: jest.fn(),
+      getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
 
     const markdown = await handleCorrelationTool(
@@ -121,7 +122,7 @@ describe('handleCorrelationTool', () => {
     });
 
     const client = {
-      getRecentWorkouts: jest.fn(),
+      getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
 
     const markdown = await handleCorrelationTool(

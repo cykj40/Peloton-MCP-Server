@@ -1,10 +1,11 @@
+import { vi } from 'vitest';
 import { handleWorkoutTool } from '../../tools/workouts.js';
 import { makeMockWorkout } from '../fixtures.js';
 
 describe('handleWorkoutTool', () => {
   it('returns markdown workout details', async () => {
     const client = {
-      searchWorkouts: jest.fn().mockResolvedValue([makeMockWorkout({ id: 'w1' })]),
+      searchWorkouts: vi.fn().mockResolvedValue([makeMockWorkout({ id: 'w1' })]),
     } as unknown as Parameters<typeof handleWorkoutTool>[2];
 
     const result = await handleWorkoutTool('peloton_get_workouts', { limit: 10, response_format: 'markdown' }, client);
@@ -14,7 +15,7 @@ describe('handleWorkoutTool', () => {
 
   it('returns json payload with total_workouts and workouts array', async () => {
     const client = {
-      searchWorkouts: jest.fn().mockResolvedValue([makeMockWorkout({ id: 'w1' })]),
+      searchWorkouts: vi.fn().mockResolvedValue([makeMockWorkout({ id: 'w1' })]),
     } as unknown as Parameters<typeof handleWorkoutTool>[2];
 
     const result = await handleWorkoutTool('peloton_get_workouts', { limit: 10, response_format: 'json' }, client);
@@ -25,7 +26,7 @@ describe('handleWorkoutTool', () => {
 
   it('passes discipline filter to searchWorkouts', async () => {
     const client = {
-      searchWorkouts: jest.fn().mockResolvedValue([]),
+      searchWorkouts: vi.fn().mockResolvedValue([]),
     } as unknown as Parameters<typeof handleWorkoutTool>[2];
 
     await handleWorkoutTool('peloton_get_workouts', { limit: 10, discipline: 'cycling', response_format: 'json' }, client);
@@ -36,7 +37,7 @@ describe('handleWorkoutTool', () => {
   });
 
   it('passes start_date and end_date as Date objects', async () => {
-    const searchWorkouts = jest.fn().mockResolvedValue([]);
+    const searchWorkouts = vi.fn().mockResolvedValue([]);
     const client = {
       searchWorkouts,
     } as unknown as Parameters<typeof handleWorkoutTool>[2];
@@ -54,7 +55,7 @@ describe('handleWorkoutTool', () => {
 
   it('renders empty results message', async () => {
     const client = {
-      searchWorkouts: jest.fn().mockResolvedValue([]),
+      searchWorkouts: vi.fn().mockResolvedValue([]),
     } as unknown as Parameters<typeof handleWorkoutTool>[2];
 
     const result = await handleWorkoutTool('peloton_get_workouts', { limit: 10, response_format: 'markdown' }, client);
