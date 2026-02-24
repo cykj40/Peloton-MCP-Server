@@ -115,4 +115,97 @@ describe('db queries', () => {
     deleteCorrelation(id);
     expect(getCorrelationCount()).toBe(0);
   });
+
+  it('getWorkoutById returns null when raw_data is malformed JSON', () => {
+    // First insert a valid workout, then corrupt its raw_data
+    upsertWorkout(makeMockWorkout({ id: 'bad-json' }));
+    const db = getDatabase();
+    db.prepare('UPDATE workouts SET raw_data = ? WHERE id = ?').run('{invalid json}', 'bad-json');
+    expect(getWorkoutById('bad-json')).toBeNull();
+  });
+
+  it('getWorkoutById returns null when raw_data fails schema validation', () => {
+    // First insert a valid workout, then corrupt its raw_data with invalid schema
+    upsertWorkout(makeMockWorkout({ id: 'bad-schema' }));
+    const db = getDatabase();
+    const invalidData = JSON.stringify({ id: 'w1', missing_required_fields: true });
+    db.prepare('UPDATE workouts SET raw_data = ? WHERE id = ?').run(invalidData, 'bad-schema');
+    expect(getWorkoutById('bad-schema')).toBeNull();
+  });
+
+  it('getWorkoutsByDateRange skips workouts with invalid raw_data', () => {
+    const base = 1_700_000_000;
+    upsertWorkout(makeMockWorkout({ id: 'valid', created_at: base }));
+    upsertWorkout(makeMockWorkout({ id: 'invalid', created_at: base + 100 }));
+
+    // Corrupt the second workout's raw_data
+    const db = getDatabase();
+    db.prepare('UPDATE workouts SET raw_data = ? WHERE id = ?').run('{bad json}', 'invalid');
+
+    const result = getWorkoutsByDateRange(base - 100, base + 200);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('valid');
+  });
+
+  it('getMuscleSnapshot returns null when muscle_data contains non-number values', () => {
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO muscle_snapshots (period, calculated_at, muscle_data, workout_count)
+       VALUES (?, datetime('now'), ?, ?)`
+    ).run('7_days', JSON.stringify({ Quadriceps: 'not-a-number' }), 5);
+
+    expect(getMuscleSnapshot('7_days')).toBeNull();
+  });
+
+  it('getMuscleSnapshot returns null when muscle_data is not an object', () => {
+    const db = getDatabase();
+    db.prepare(
+      `INSERT INTO muscle_snapshots (period, calculated_at, muscle_data, workout_count)
+       VALUES (?, datetime('now'), ?, ?)`
+    ).run('30_days', JSON.stringify('not-an-object'), 5);
+
+    expect(getMuscleSnapshot('30_days')).toBeNull();
+  });
+
+  it('getRecentWorkoutsFromDB skips workouts with invalid raw_data', () => {
+    const base = 1_700_000_000;
+    upsertWorkout(makeMockWorkout({ id: 'valid', created_at: base }));
+    upsertWorkout(makeMockWorkout({ id: 'invalid', created_at: base + 100 }));
+
+    // Corrupt the second workout's raw_data
+    const db = getDatabase();
+    db.prepare('UPDATE workouts SET raw_data = ? WHERE id = ?').run('{bad json}', 'invalid');
+
+    const result = getRecentWorkoutsFromDB(10);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('valid');
+  });
+
+
+  it('getAllCorrelations respects limit parameter', () => {
+    // Insert workouts first (required for foreign key)
+    for (let i = 0; i < 5; i += 1) {
+      upsertWorkout(makeMockWorkout({ id: `w-${i}` }));
+    }
+
+    for (let i = 0; i < 5; i += 1) {
+      insertGlucoseCorrelation({
+        workout_id: `w-${i}`,
+        workout_timestamp: 1_700_000_000 + i,
+        discipline: 'cycling',
+        duration_seconds: 1800,
+        pre_workout_glucose: 120,
+        glucose_at_start: 115,
+        glucose_nadir: 85,
+        glucose_nadir_time: 90,
+        glucose_4h_post: 110,
+        avg_drop: 30,
+        recovery_time_minutes: 45,
+        notes: null,
+      });
+    }
+
+    expect(getAllCorrelations(3)).toHaveLength(3);
+    expect(getAllCorrelations()).toHaveLength(5);
+  });
 });

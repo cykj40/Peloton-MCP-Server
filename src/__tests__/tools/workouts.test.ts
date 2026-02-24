@@ -61,4 +61,40 @@ describe('handleWorkoutTool', () => {
     const result = await handleWorkoutTool('peloton_get_workouts', { limit: 10, response_format: 'markdown' }, client);
     expect(result.content[0]?.text).toContain('No workouts found');
   });
+
+  it('passes instructor filter to searchWorkouts', async () => {
+    const client = {
+      searchWorkouts: vi.fn().mockResolvedValue([]),
+    } as unknown as Parameters<typeof handleWorkoutTool>[2];
+
+    await handleWorkoutTool(
+      'peloton_get_workouts',
+      { limit: 10, instructor: 'Robin', response_format: 'json' },
+      client
+    );
+
+    expect(client.searchWorkouts).toHaveBeenCalledWith(
+      expect.objectContaining({ instructor: 'Robin' })
+    );
+  });
+
+  it('returns error for unknown tool name', async () => {
+    const client = {
+      searchWorkouts: vi.fn(),
+    } as unknown as Parameters<typeof handleWorkoutTool>[2];
+
+    const result = await handleWorkoutTool('unknown_tool' as 'peloton_get_workouts', { limit: 10, response_format: 'json' }, client);
+
+    expect(result.content[0]?.text).toBe('Unknown tool');
+  });
+
+  it('returns error message when client throws error', async () => {
+    const client = {
+      searchWorkouts: vi.fn().mockRejectedValue(new Error('API failure')),
+    } as unknown as Parameters<typeof handleWorkoutTool>[2];
+
+    const result = await handleWorkoutTool('peloton_get_workouts', { limit: 10, response_format: 'json' }, client);
+
+    expect(result.content[0]?.text).toBe('Error: API failure');
+  });
 });

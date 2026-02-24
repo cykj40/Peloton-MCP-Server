@@ -186,18 +186,21 @@ describe('PelotonClient', () => {
   });
 
   it('getUserProfile skips testConnection when userId is already set', async () => {
-    nock(PELOTON_API_URL).get('/api/me').reply(200, {
-      username: 'testuser',
-      id: 'user123',
-      total_workouts: 5,
-    });
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .twice()
+      .reply(200, {
+        username: 'testuser',
+        id: 'user123',
+        total_workouts: 5,
+      });
 
     const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
 
     // First call sets userId
     await client.testConnection();
 
-    // Second call should skip testConnection
+    // Second call should reuse the userId but still call /api/me
     const profile = await client.getUserProfile();
 
     expect(profile.username).toBe('testuser');
@@ -208,5 +211,59 @@ describe('PelotonClient', () => {
     expect(() => new PelotonClient('not-a-jwt-token')).toThrow(
       'PelotonClient only accepts JWT Bearer tokens'
     );
+  });
+
+  it('searchWorkouts handles startDate filter', async () => {
+    nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
+    upsertWorkout(makeMockWorkout({ id: 'old-workout', created_at: 1_600_000_000 }));
+    upsertWorkout(makeMockWorkout({ id: 'new-workout', created_at: 1_700_000_000 }));
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const startDate = new Date(1_650_000_000 * 1000);
+    const result = await client.searchWorkouts({ startDate, limit: 10 });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('new-workout');
+  });
+
+  it('getRecentWorkouts throws error when response schema is invalid', async () => {
+    nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
+    nock(PELOTON_API_URL)
+      .get('/api/user/user123/workouts')
+      .query(true)
+      .reply(200, { invalid: 'response' });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    await expect(client.getRecentWorkouts(10)).rejects.toThrow('Invalid workouts response');
+  });
+
+  it('getUserProfile throws error when response schema is invalid', async () => {
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .reply(200, { invalid: 'profile' });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    await expect(client.getUserProfile()).rejects.toThrow('Invalid /api/me response');
+  });
+
+  it('testConnection returns success false and throws error on invalid schema', async () => {
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .reply(200, { invalid: 'response' });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const result = await client.testConnection();
+
+    expect(result.success).toBe(false);
+    expect(result.details).toContain('Invalid /api/me response');
+  });
+
+  it('getRecentWorkouts throws error when testConnection fails', async () => {
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .reply(401, { error: 'unauthorized' });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    await expect(client.getRecentWorkouts(10)).rejects.toThrow('Could not get user ID');
   });
 });
