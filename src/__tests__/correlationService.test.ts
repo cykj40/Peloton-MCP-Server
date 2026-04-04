@@ -8,15 +8,15 @@ import { makeMockGlucoseReading, makeMockWorkout } from './fixtures.js';
 import { setupTestDb, teardownTestDb } from './testDb.js';
 
 describe('correlationService', () => {
-  beforeEach(() => {
-    setupTestDb();
+  beforeEach(async () => {
+    await setupTestDb();
   });
 
-  afterEach(() => {
-    teardownTestDb();
+  afterEach(async () => {
+    await teardownTestDb();
   });
 
-  it('analyzes workout glucose impact fields correctly', () => {
+  it('analyzes workout glucose impact fields correctly', async () => {
     const workoutStart = 1_700_000_000;
     const workout = makeMockWorkout({
       id: 'w-glucose',
@@ -24,7 +24,7 @@ describe('correlationService', () => {
       duration: 1800,
       fitness_discipline: 'cycling',
     });
-    upsertWorkout(workout);
+    await upsertWorkout(workout);
 
     const readings = [
       makeMockGlucoseReading(140, -30, workoutStart),
@@ -34,7 +34,7 @@ describe('correlationService', () => {
       makeMockGlucoseReading(95, 240, workoutStart),
     ];
 
-    const result = analyzeWorkoutGlucoseImpact(workout, readings);
+    const result = await analyzeWorkoutGlucoseImpact(workout, readings);
 
     expect(result.pre_workout_glucose).toBe(132);
     expect(result.glucose_at_start).toBe(125);
@@ -44,12 +44,12 @@ describe('correlationService', () => {
     expect(result.id).toBeDefined();
   });
 
-  it('groups insights by discipline with risk levels', () => {
-    upsertWorkout(makeMockWorkout({ id: 'a', fitness_discipline: 'cycling' }));
-    upsertWorkout(makeMockWorkout({ id: 'b', fitness_discipline: 'cycling' }));
-    upsertWorkout(makeMockWorkout({ id: 'c', fitness_discipline: 'yoga' }));
+  it('groups insights by discipline with risk levels', async () => {
+    await upsertWorkout(makeMockWorkout({ id: 'a', fitness_discipline: 'cycling' }));
+    await upsertWorkout(makeMockWorkout({ id: 'b', fitness_discipline: 'cycling' }));
+    await upsertWorkout(makeMockWorkout({ id: 'c', fitness_discipline: 'yoga' }));
 
-    insertGlucoseCorrelation({
+    await insertGlucoseCorrelation({
       workout_id: 'a',
       workout_timestamp: 100,
       discipline: 'cycling',
@@ -63,7 +63,7 @@ describe('correlationService', () => {
       recovery_time_minutes: 50,
       notes: null,
     });
-    insertGlucoseCorrelation({
+    await insertGlucoseCorrelation({
       workout_id: 'b',
       workout_timestamp: 110,
       discipline: 'cycling',
@@ -77,7 +77,7 @@ describe('correlationService', () => {
       recovery_time_minutes: 45,
       notes: null,
     });
-    insertGlucoseCorrelation({
+    await insertGlucoseCorrelation({
       workout_id: 'c',
       workout_timestamp: 120,
       discipline: 'yoga',
@@ -92,7 +92,7 @@ describe('correlationService', () => {
       notes: null,
     });
 
-    const insights = getInsightsByDiscipline();
+    const insights = await getInsightsByDiscipline();
 
     const cycling = insights.find((item) => item.discipline === 'cycling');
     const yoga = insights.find((item) => item.discipline === 'yoga');
@@ -102,12 +102,12 @@ describe('correlationService', () => {
     expect(yoga?.risk_level).toBe('low');
   });
 
-  it('detects delayed hypoglycemia with severity classification', () => {
-    upsertWorkout(makeMockWorkout({ id: 's1', fitness_discipline: 'running' }));
-    upsertWorkout(makeMockWorkout({ id: 's2', fitness_discipline: 'running' }));
-    upsertWorkout(makeMockWorkout({ id: 's3', fitness_discipline: 'running' }));
+  it('detects delayed hypoglycemia with severity classification', async () => {
+    await upsertWorkout(makeMockWorkout({ id: 's1', fitness_discipline: 'running' }));
+    await upsertWorkout(makeMockWorkout({ id: 's2', fitness_discipline: 'running' }));
+    await upsertWorkout(makeMockWorkout({ id: 's3', fitness_discipline: 'running' }));
 
-    insertGlucoseCorrelation({
+    await insertGlucoseCorrelation({
       workout_id: 's1',
       workout_timestamp: 100,
       discipline: 'running',
@@ -121,7 +121,7 @@ describe('correlationService', () => {
       recovery_time_minutes: 100,
       notes: null,
     });
-    insertGlucoseCorrelation({
+    await insertGlucoseCorrelation({
       workout_id: 's2',
       workout_timestamp: 101,
       discipline: 'running',
@@ -135,7 +135,7 @@ describe('correlationService', () => {
       recovery_time_minutes: 100,
       notes: null,
     });
-    insertGlucoseCorrelation({
+    await insertGlucoseCorrelation({
       workout_id: 's3',
       workout_timestamp: 102,
       discipline: 'running',
@@ -150,7 +150,7 @@ describe('correlationService', () => {
       notes: null,
     });
 
-    const alerts = detectDelayedHypoglycemia();
+    const alerts = await detectDelayedHypoglycemia();
 
     expect(alerts).toHaveLength(3);
     expect(alerts.find((item) => item.workout_id === 's1')?.severity).toBe('severe');

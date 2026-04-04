@@ -1,16 +1,15 @@
 import { getDatabase } from './database.js';
-import { CountRowSchema } from '../schemas/db.js';
 
 /**
  * Run all database migrations
  */
-export function runMigrations(): void {
+export async function runMigrations(): Promise<void> {
   const db = getDatabase();
 
   console.error('[Migrations] Running database migrations...');
 
   // Create workouts table
-  db.exec(`
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS workouts (
       id TEXT PRIMARY KEY,
       title TEXT,
@@ -27,19 +26,19 @@ export function runMigrations(): void {
   `);
 
   // Create index on workout_timestamp for fast range queries
-  db.exec(`
+  await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_workouts_timestamp
     ON workouts(workout_timestamp)
   `);
 
   // Create index on discipline for filtering
-  db.exec(`
+  await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_workouts_discipline
     ON workouts(discipline)
   `);
 
   // Create muscle_snapshots table
-  db.exec(`
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS muscle_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       period TEXT NOT NULL,
@@ -50,13 +49,13 @@ export function runMigrations(): void {
   `);
 
   // Create index on period for fast lookups
-  db.exec(`
+  await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_muscle_snapshots_period
     ON muscle_snapshots(period)
   `);
 
   // Create glucose_correlations table
-  db.exec(`
+  await db.execute(`
     CREATE TABLE IF NOT EXISTS glucose_correlations (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       workout_id TEXT NOT NULL,
@@ -77,17 +76,17 @@ export function runMigrations(): void {
   `);
 
   // Create indexes on glucose_correlations for fast queries
-  db.exec(`
+  await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_correlations_workout_id
     ON glucose_correlations(workout_id)
   `);
 
-  db.exec(`
+  await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_correlations_discipline
     ON glucose_correlations(discipline)
   `);
 
-  db.exec(`
+  await db.execute(`
     CREATE INDEX IF NOT EXISTS idx_correlations_timestamp
     ON glucose_correlations(workout_timestamp)
   `);
@@ -95,12 +94,11 @@ export function runMigrations(): void {
   console.error('[Migrations] ✅ Database migrations completed');
 
   // Log table counts
-  const workoutCountRow = db.prepare('SELECT COUNT(*) as count FROM workouts').get();
-  const correlationCountRow = db.prepare('SELECT COUNT(*) as count FROM glucose_correlations').get();
-  const workoutCountParsed = CountRowSchema.safeParse(workoutCountRow);
-  const correlationCountParsed = CountRowSchema.safeParse(correlationCountRow);
-  const workoutCount = workoutCountParsed.success ? workoutCountParsed.data.count : 0;
-  const correlationCount = correlationCountParsed.success ? correlationCountParsed.data.count : 0;
+  const workoutResult = await db.execute('SELECT COUNT(*) as count FROM workouts');
+  const correlationResult = await db.execute('SELECT COUNT(*) as count FROM glucose_correlations');
+  // COUNT(*) always returns exactly one row
+  const workoutCount = Number(workoutResult.rows[0]!['count']);
+  const correlationCount = Number(correlationResult.rows[0]!['count']);
 
   console.error(`[DB] Current data: ${workoutCount} workouts, ${correlationCount} correlations`);
 }

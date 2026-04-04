@@ -114,10 +114,10 @@ function findRecoveryTime(
 /**
  * Analyze how a workout affected blood glucose levels
  */
-export function analyzeWorkoutGlucoseImpact(
+export async function analyzeWorkoutGlucoseImpact(
   workout: PelotonWorkout,
   glucoseReadings: GlucoseReading[]
-): GlucoseCorrelation {
+): Promise<GlucoseCorrelation> {
   const workoutStart = workout.created_at;
   const workoutEnd = workoutStart + workout.duration;
 
@@ -177,7 +177,7 @@ export function analyzeWorkoutGlucoseImpact(
   };
 
   // Save to database
-  const correlationId = insertGlucoseCorrelation(correlation);
+  const correlationId = await insertGlucoseCorrelation(correlation);
   correlation.id = correlationId;
 
   return correlation;
@@ -186,8 +186,8 @@ export function analyzeWorkoutGlucoseImpact(
 /**
  * Get aggregated insights by discipline
  */
-export function getInsightsByDiscipline(): DisciplineInsight[] {
-  const allCorrelations = getAllCorrelations();
+export async function getInsightsByDiscipline(): Promise<DisciplineInsight[]> {
+  const allCorrelations = await getAllCorrelations();
 
   // Group by discipline
   const byDiscipline: { [key: string]: GlucoseCorrelation[] } = {};
@@ -271,10 +271,10 @@ export function getInsightsByDiscipline(): DisciplineInsight[] {
 /**
  * Detect delayed hypoglycemia patterns
  */
-export function detectDelayedHypoglycemia(
+export async function detectDelayedHypoglycemia(
   correlations?: GlucoseCorrelation[]
-): HypoglycemiaAlert[] {
-  const corrs = correlations || getAllCorrelations();
+): Promise<HypoglycemiaAlert[]> {
+  const corrs = correlations ?? await getAllCorrelations();
   const alerts: HypoglycemiaAlert[] = [];
 
   for (const corr of corrs) {

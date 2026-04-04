@@ -6,15 +6,15 @@ import { makeMockWorkout } from './fixtures.js';
 import { setupTestDb, teardownTestDb } from './testDb.js';
 
 describe('PelotonClient', () => {
-  beforeEach(() => {
-    setupTestDb();
+  beforeEach(async () => {
+    await setupTestDb();
     PelotonClient.clearCache();
     nock.cleanAll();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     nock.cleanAll();
-    teardownTestDb();
+    await teardownTestDb();
   });
 
   it('testConnection success path', async () => {
@@ -63,8 +63,8 @@ describe('PelotonClient', () => {
 
     expect(workouts).toHaveLength(1);
     expect(workouts[0]?.name).toBe('Ride Title');
-    expect(getWorkoutCount()).toBe(1);
-    expect(getWorkoutById('workout-1')?.instructor?.name).toBe('Alex');
+    expect(await getWorkoutCount()).toBe(1);
+    expect((await getWorkoutById('workout-1'))?.instructor?.name).toBe('Alex');
   });
 
   it('getRecentWorkouts retries after rate limit', async () => {
@@ -101,8 +101,8 @@ describe('PelotonClient', () => {
 
   it('searchWorkouts applies discipline filtering on DB data', async () => {
     nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
-    upsertWorkout(makeMockWorkout({ id: 'c1', fitness_discipline: 'cycling' }));
-    upsertWorkout(makeMockWorkout({ id: 's1', fitness_discipline: 'strength' }));
+    await upsertWorkout(makeMockWorkout({ id: 'c1', fitness_discipline: 'cycling' }));
+    await upsertWorkout(makeMockWorkout({ id: 's1', fitness_discipline: 'strength' }));
 
     const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
     const result = await client.searchWorkouts({ discipline: 'cycling', limit: 10 });
@@ -152,8 +152,8 @@ describe('PelotonClient', () => {
 
   it('searchWorkouts filters by endDate', async () => {
     nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
-    upsertWorkout(makeMockWorkout({ id: 'old', created_at: 1_600_000_000 }));
-    upsertWorkout(makeMockWorkout({ id: 'new', created_at: 1_700_000_000 }));
+    await upsertWorkout(makeMockWorkout({ id: 'old', created_at: 1_600_000_000 }));
+    await upsertWorkout(makeMockWorkout({ id: 'new', created_at: 1_700_000_000 }));
 
     const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
     const endDate = new Date(1_650_000_000 * 1000);
@@ -165,13 +165,13 @@ describe('PelotonClient', () => {
 
   it('searchWorkouts filters by instructor', async () => {
     nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
-    upsertWorkout(
+    await upsertWorkout(
       makeMockWorkout({
         id: 'alex-ride',
         instructor: { id: 'i1', name: 'Alex' },
       })
     );
-    upsertWorkout(
+    await upsertWorkout(
       makeMockWorkout({
         id: 'robin-ride',
         instructor: { id: 'i2', name: 'Robin' },
@@ -197,10 +197,7 @@ describe('PelotonClient', () => {
 
     const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
 
-    // First call sets userId
     await client.testConnection();
-
-    // Second call should reuse the userId but still call /api/me
     const profile = await client.getUserProfile();
 
     expect(profile.username).toBe('testuser');
@@ -215,8 +212,8 @@ describe('PelotonClient', () => {
 
   it('searchWorkouts handles startDate filter', async () => {
     nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
-    upsertWorkout(makeMockWorkout({ id: 'old-workout', created_at: 1_600_000_000 }));
-    upsertWorkout(makeMockWorkout({ id: 'new-workout', created_at: 1_700_000_000 }));
+    await upsertWorkout(makeMockWorkout({ id: 'old-workout', created_at: 1_600_000_000 }));
+    await upsertWorkout(makeMockWorkout({ id: 'new-workout', created_at: 1_700_000_000 }));
 
     const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
     const startDate = new Date(1_650_000_000 * 1000);

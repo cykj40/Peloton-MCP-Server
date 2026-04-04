@@ -118,7 +118,7 @@ export async function handleCorrelationTool(
         const params = GlucoseCorrelationAnalysisSchema.parse(args);
         const responseFormat = params.response_format;
 
-        const workout = getWorkoutById(params.workout_id);
+        const workout = await getWorkoutById(params.workout_id);
         if (!workout) {
           return {
             content: [
@@ -135,7 +135,7 @@ export async function handleCorrelationTool(
           recordedAt: reading.recordedAt ?? reading.recorded_at ?? '',
         }));
 
-        const correlation = analyzeWorkoutGlucoseImpact(workout, readings);
+        const correlation = await analyzeWorkoutGlucoseImpact(workout, readings);
 
         if (responseFormat === 'json') {
           return {
@@ -186,7 +186,7 @@ export async function handleCorrelationTool(
 
       case 'peloton_get_discipline_insights': {
         const params = CorrelationResponseSchema.parse(args);
-        const insights = getInsightsByDiscipline();
+        const insights = await getInsightsByDiscipline();
 
         if (insights.length === 0) {
           return {
@@ -246,7 +246,7 @@ export async function handleCorrelationTool(
 
       case 'peloton_detect_hypoglycemia_risk': {
         const params = CorrelationResponseSchema.parse(args);
-        const alerts = detectDelayedHypoglycemia();
+        const alerts = await detectDelayedHypoglycemia();
 
         if (alerts.length === 0) {
           return {
@@ -313,7 +313,7 @@ export async function handleCorrelationTool(
       case 'peloton_sync_workouts': {
         const params = SyncWorkoutsSchema.parse(args);
         const workouts = await client.getRecentWorkouts(params.limit);
-        const dbCount = getWorkoutCount();
+        const dbCount = await getWorkoutCount();
 
         return {
           content: [

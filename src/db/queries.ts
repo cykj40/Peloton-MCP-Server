@@ -1,7 +1,6 @@
 import { getDatabase } from './database.js';
 import { GlucoseCorrelation, MuscleGroupData, MuscleSnapshot, PelotonWorkout } from '../types/index.js';
 import {
-  CountRowSchema,
   GlucoseCorrelationSchema,
   MuscleSnapshotRowSchema,
   StoredPelotonWorkoutSchema,
@@ -44,7 +43,7 @@ function parseWorkout(rawData: string): PelotonWorkout | null {
   }
 }
 
-function parseCorrelationRows(rows: unknown[]): GlucoseCorrelation[] {
+function parseCorrelationRows(rows: object[]): GlucoseCorrelation[] {
   const correlations: GlucoseCorrelation[] = [];
   for (const row of rows) {
     const parsed = GlucoseCorrelationSchema.safeParse(row);
@@ -71,10 +70,6 @@ function parseCorrelationRows(rows: unknown[]): GlucoseCorrelation[] {
   return correlations;
 }
 
-function readCount(row: unknown): number {
-  const parsed = CountRowSchema.safeParse(row);
-  return parsed.success ? parsed.data.count : 0;
-}
 
 function parseMuscleGroupData(value: unknown): MuscleGroupData | null {
   if (typeof value !== 'object' || value === null) {
@@ -95,46 +90,53 @@ function parseMuscleGroupData(value: unknown): MuscleGroupData | null {
 /**
  * Insert or update a workout in the database.
  */
-export function upsertWorkout(workout: PelotonWorkout): void {
+export async function upsertWorkout(workout: PelotonWorkout): Promise<void> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    INSERT OR REPLACE INTO workouts (
-      id, title, discipline, instructor_name, duration_seconds,
-      calories, workout_timestamp, output_watts, heart_rate_avg, raw_data
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  stmt.run(
-    workout.id,
-    workout.name || workout.ride?.title || null,
-    workout.fitness_discipline,
-    workout.instructor?.name || workout.ride?.instructor?.name || null,
-    workout.duration,
-    workout.calories || null,
-    workout.created_at,
-    workout.total_work || null,
-    null,
-    JSON.stringify(workout)
-  );
+  await db.execute({
+    sql: `
+      INSERT OR REPLACE INTO workouts (
+        id, title, discipline, instructor_name, duration_seconds,
+        calories, workout_timestamp, output_watts, heart_rate_avg, raw_data
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      workout.id,
+      workout.name || workout.ride?.title || null,
+      workout.fitness_discipline,
+      workout.instructor?.name || workout.ride?.instructor?.name || null,
+      workout.duration,
+      workout.calories || null,
+      workout.created_at,
+      workout.total_work || null,
+      null,
+      JSON.stringify(workout),
+    ],
+  });
 }
 
 /**
  * Get workouts by date range.
  */
-export function getWorkoutsByDateRange(startTimestamp: number, endTimestamp: number): PelotonWorkout[] {
+export async function getWorkoutsByDateRange(
+  startTimestamp: number,
+  endTimestamp: number
+): Promise<PelotonWorkout[]> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT raw_data
-    FROM workouts
-    WHERE workout_timestamp >= ? AND workout_timestamp <= ?
-    ORDER BY workout_timestamp DESC
-  `);
+  const result = await db.execute({
+    sql: `
+      SELECT raw_data
+      FROM workouts
+      WHERE workout_timestamp >= ? AND workout_timestamp <= ?
+      ORDER BY workout_timestamp DESC
+    `,
+    args: [startTimestamp, endTimestamp],
+  });
 
-  const rows = stmt.all(startTimestamp, endTimestamp);
   const workouts: PelotonWorkout[] = [];
-  for (const row of rows) {
-    if (typeof row === 'object' && row !== null && 'raw_data' in row && typeof row.raw_data === 'string') {
-      const workout = parseWorkout(row.raw_data);
+  for (const row of result.rows) {
+    const rawData = row['raw_data'];
+    if (typeof rawData === 'string') {
+      const workout = parseWorkout(rawData);
       if (workout) {
         workouts.push(workout);
       }
@@ -146,17 +148,18 @@ export function getWorkoutsByDateRange(startTimestamp: number, endTimestamp: num
 /**
  * Get workout by ID.
  */
-export function getWorkoutById(id: string): PelotonWorkout | null {
+export async function getWorkoutById(id: string): Promise<PelotonWorkout | null> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT raw_data
-    FROM workouts
-    WHERE id = ?
-  `);
+  const result = await db.execute({
+    sql: `SELECT raw_data FROM workouts WHERE id = ?`,
+    args: [id],
+  });
 
-  const row = stmt.get(id);
-  if (typeof row === 'object' && row !== null && 'raw_data' in row && typeof row.raw_data === 'string') {
-    return parseWorkout(row.raw_data);
+  const row = result.rows[0];
+  if (!row) return null;
+  const rawData = row['raw_data'];
+  if (typeof rawData === 'string') {
+    return parseWorkout(rawData);
   }
   return null;
 }
@@ -164,29 +167,33 @@ export function getWorkoutById(id: string): PelotonWorkout | null {
 /**
  * Get total workout count.
  */
-export function getWorkoutCount(): number {
+export async function getWorkoutCount(): Promise<number> {
   const db = getDatabase();
-  const result = db.prepare('SELECT COUNT(*) as count FROM workouts').get();
-  return readCount(result);
+  const result = await db.execute('SELECT COUNT(*) as count FROM workouts');
+  // COUNT(*) always returns exactly one row
+  return Number(result.rows[0]!['count']);
 }
 
 /**
  * Get recent workouts from database.
  */
-export function getRecentWorkoutsFromDB(limit = 10): PelotonWorkout[] {
+export async function getRecentWorkoutsFromDB(limit = 10): Promise<PelotonWorkout[]> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT raw_data
-    FROM workouts
-    ORDER BY workout_timestamp DESC
-    LIMIT ?
-  `);
+  const result = await db.execute({
+    sql: `
+      SELECT raw_data
+      FROM workouts
+      ORDER BY workout_timestamp DESC
+      LIMIT ?
+    `,
+    args: [limit],
+  });
 
-  const rows = stmt.all(limit);
   const workouts: PelotonWorkout[] = [];
-  for (const row of rows) {
-    if (typeof row === 'object' && row !== null && 'raw_data' in row && typeof row.raw_data === 'string') {
-      const workout = parseWorkout(row.raw_data);
+  for (const row of result.rows) {
+    const rawData = row['raw_data'];
+    if (typeof rawData === 'string') {
+      const workout = parseWorkout(rawData);
       if (workout) {
         workouts.push(workout);
       }
@@ -198,21 +205,24 @@ export function getRecentWorkoutsFromDB(limit = 10): PelotonWorkout[] {
 /**
  * Get workouts by discipline.
  */
-export function getWorkoutsByDiscipline(discipline: string, limit = 50): PelotonWorkout[] {
+export async function getWorkoutsByDiscipline(discipline: string, limit = 50): Promise<PelotonWorkout[]> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT raw_data
-    FROM workouts
-    WHERE discipline = ?
-    ORDER BY workout_timestamp DESC
-    LIMIT ?
-  `);
+  const result = await db.execute({
+    sql: `
+      SELECT raw_data
+      FROM workouts
+      WHERE discipline = ?
+      ORDER BY workout_timestamp DESC
+      LIMIT ?
+    `,
+    args: [discipline, limit],
+  });
 
-  const rows = stmt.all(discipline, limit);
   const workouts: PelotonWorkout[] = [];
-  for (const row of rows) {
-    if (typeof row === 'object' && row !== null && 'raw_data' in row && typeof row.raw_data === 'string') {
-      const workout = parseWorkout(row.raw_data);
+  for (const row of result.rows) {
+    const rawData = row['raw_data'];
+    if (typeof rawData === 'string') {
+      const workout = parseWorkout(rawData);
       if (workout) {
         workouts.push(workout);
       }
@@ -224,35 +234,47 @@ export function getWorkoutsByDiscipline(discipline: string, limit = 50): Peloton
 /**
  * Insert or update muscle snapshot for a period.
  */
-export function upsertMuscleSnapshot(
+export async function upsertMuscleSnapshot(
   period: '7_days' | '30_days' | '90_days',
   muscleData: MuscleGroupData,
   workoutCount: number
-): void {
+): Promise<void> {
   const db = getDatabase();
-  db.prepare('DELETE FROM muscle_snapshots WHERE period = ?').run(period);
-  const stmt = db.prepare(`
-    INSERT INTO muscle_snapshots (period, calculated_at, muscle_data, workout_count)
-    VALUES (?, datetime('now'), ?, ?)
-  `);
-  stmt.run(period, JSON.stringify(muscleData), workoutCount);
+  await db.execute({ sql: 'DELETE FROM muscle_snapshots WHERE period = ?', args: [period] });
+  await db.execute({
+    sql: `INSERT INTO muscle_snapshots (period, calculated_at, muscle_data, workout_count)
+          VALUES (?, datetime('now'), ?, ?)`,
+    args: [period, JSON.stringify(muscleData), workoutCount],
+  });
 }
 
 /**
  * Get muscle snapshot for a period (returns null if older than 1 hour).
  */
-export function getMuscleSnapshot(period: '7_days' | '30_days' | '90_days'): MuscleSnapshot | null {
+export async function getMuscleSnapshot(period: '7_days' | '30_days' | '90_days'): Promise<MuscleSnapshot | null> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT id, period, calculated_at, muscle_data, workout_count
-    FROM muscle_snapshots
-    WHERE period = ?
-    AND datetime(calculated_at) > datetime('now', '-1 hour')
-    ORDER BY calculated_at DESC
-    LIMIT 1
-  `);
+  const result = await db.execute({
+    sql: `
+      SELECT id, period, calculated_at, muscle_data, workout_count
+      FROM muscle_snapshots
+      WHERE period = ?
+      ORDER BY calculated_at DESC
+      LIMIT 1
+    `,
+    args: [period],
+  });
 
-  const row = stmt.get(period);
+  const row = result.rows[0];
+  if (!row) return null;
+
+  // Check expiry in JS
+  // SQLite datetime('now') returns "YYYY-MM-DD HH:MM:SS" (UTC without Z suffix).
+  // Replace the space with T and append Z so Date() parses it as UTC.
+  const calculatedAtStr = String(row['calculated_at']).replace(' ', 'T') + 'Z';
+  const calculatedAt = new Date(calculatedAtStr);
+  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+  if (calculatedAt < oneHourAgo) return null;
+
   const parsedRow = MuscleSnapshotRowSchema.safeParse(row);
   if (!parsedRow.success) {
     return null;
@@ -276,79 +298,78 @@ export function getMuscleSnapshot(period: '7_days' | '30_days' | '90_days'): Mus
 /**
  * Insert a glucose correlation.
  */
-export function insertGlucoseCorrelation(correlation: GlucoseCorrelation): number {
+export async function insertGlucoseCorrelation(correlation: GlucoseCorrelation): Promise<number> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    INSERT INTO glucose_correlations (
-      workout_id, workout_timestamp, discipline, duration_seconds,
-      pre_workout_glucose, glucose_at_start, glucose_nadir, glucose_nadir_time,
-      glucose_4h_post, avg_drop, recovery_time_minutes, notes
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  const result = await db.execute({
+    sql: `
+      INSERT INTO glucose_correlations (
+        workout_id, workout_timestamp, discipline, duration_seconds,
+        pre_workout_glucose, glucose_at_start, glucose_nadir, glucose_nadir_time,
+        glucose_4h_post, avg_drop, recovery_time_minutes, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    args: [
+      correlation.workout_id,
+      correlation.workout_timestamp,
+      correlation.discipline,
+      correlation.duration_seconds,
+      correlation.pre_workout_glucose,
+      correlation.glucose_at_start,
+      correlation.glucose_nadir,
+      correlation.glucose_nadir_time,
+      correlation.glucose_4h_post,
+      correlation.avg_drop,
+      correlation.recovery_time_minutes,
+      correlation.notes,
+    ],
+  });
 
-  const result = stmt.run(
-    correlation.workout_id,
-    correlation.workout_timestamp,
-    correlation.discipline,
-    correlation.duration_seconds,
-    correlation.pre_workout_glucose,
-    correlation.glucose_at_start,
-    correlation.glucose_nadir,
-    correlation.glucose_nadir_time,
-    correlation.glucose_4h_post,
-    correlation.avg_drop,
-    correlation.recovery_time_minutes,
-    correlation.notes
-  );
-
-  if (typeof result.lastInsertRowid === 'bigint') {
-    return Number(result.lastInsertRowid);
-  }
-
-  return result.lastInsertRowid;
+  return Number(result.lastInsertRowid);
 }
 
 /**
  * Get correlations by discipline.
  */
-export function getCorrelationsByDiscipline(discipline: string): GlucoseCorrelation[] {
+export async function getCorrelationsByDiscipline(discipline: string): Promise<GlucoseCorrelation[]> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT * FROM glucose_correlations
-    WHERE discipline = ?
-    ORDER BY workout_timestamp DESC
-  `);
-  const rows = stmt.all(discipline);
-  return parseCorrelationRows(rows);
+  const result = await db.execute({
+    sql: `SELECT * FROM glucose_correlations WHERE discipline = ? ORDER BY workout_timestamp DESC`,
+    args: [discipline],
+  });
+  return parseCorrelationRows(result.rows);
 }
 
 /**
  * Get all correlations with optional limit.
  */
-export function getAllCorrelations(limit?: number): GlucoseCorrelation[] {
+export async function getAllCorrelations(limit?: number): Promise<GlucoseCorrelation[]> {
   const db = getDatabase();
-  let query = 'SELECT * FROM glucose_correlations ORDER BY workout_timestamp DESC';
-  if (limit) {
-    query += ` LIMIT ${limit}`;
+  let result;
+  if (limit !== undefined) {
+    result = await db.execute({
+      sql: 'SELECT * FROM glucose_correlations ORDER BY workout_timestamp DESC LIMIT ?',
+      args: [limit],
+    });
+  } else {
+    result = await db.execute('SELECT * FROM glucose_correlations ORDER BY workout_timestamp DESC');
   }
-  const stmt = db.prepare(query);
-  const rows = stmt.all();
-  return parseCorrelationRows(rows);
+  return parseCorrelationRows(result.rows);
 }
 
 /**
  * Get correlation by workout ID.
  */
-export function getCorrelationByWorkoutId(workoutId: string): GlucoseCorrelation | null {
+export async function getCorrelationByWorkoutId(workoutId: string): Promise<GlucoseCorrelation | null> {
   const db = getDatabase();
-  const stmt = db.prepare(`
-    SELECT * FROM glucose_correlations
-    WHERE workout_id = ?
-    LIMIT 1
-  `);
+  const result = await db.execute({
+    sql: `SELECT * FROM glucose_correlations WHERE workout_id = ? LIMIT 1`,
+    args: [workoutId],
+  });
 
-  const result = stmt.get(workoutId);
-  const parsed = GlucoseCorrelationSchema.safeParse(result);
+  const row = result.rows[0];
+  if (!row) return null;
+
+  const parsed = GlucoseCorrelationSchema.safeParse(row);
   if (!parsed.success) {
     return null;
   }
@@ -375,16 +396,17 @@ export function getCorrelationByWorkoutId(workoutId: string): GlucoseCorrelation
 /**
  * Delete a correlation.
  */
-export function deleteCorrelation(id: number): void {
+export async function deleteCorrelation(id: number): Promise<void> {
   const db = getDatabase();
-  db.prepare('DELETE FROM glucose_correlations WHERE id = ?').run(id);
+  await db.execute({ sql: 'DELETE FROM glucose_correlations WHERE id = ?', args: [id] });
 }
 
 /**
  * Get correlation count.
  */
-export function getCorrelationCount(): number {
+export async function getCorrelationCount(): Promise<number> {
   const db = getDatabase();
-  const result = db.prepare('SELECT COUNT(*) as count FROM glucose_correlations').get();
-  return readCount(result);
+  const result = await db.execute('SELECT COUNT(*) as count FROM glucose_correlations');
+  // COUNT(*) always returns exactly one row
+  return Number(result.rows[0]!['count']);
 }

@@ -1,22 +1,13 @@
-import fs from 'fs';
-import os from 'os';
-import path from 'path';
 import { closeDatabase } from '../db/database.js';
 import { runMigrations } from '../db/migrations.js';
 
-let tempDir: string | null = null;
-
-export function setupTestDb(): void {
-  closeDatabase();
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'peloton-mcp-test-'));
-  process.env.PELOTON_DB_PATH = path.join(tempDir, 'test.db');
-  runMigrations();
+export async function setupTestDb(): Promise<void> {
+  await closeDatabase();
+  process.env.DATABASE_URL = 'file::memory:';
+  delete process.env.TURSO_AUTH_TOKEN;
+  await runMigrations();
 }
 
-export function teardownTestDb(): void {
-  closeDatabase();
-  if (tempDir && fs.existsSync(tempDir)) {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-  tempDir = null;
+export async function teardownTestDb(): Promise<void> {
+  await closeDatabase();
 }

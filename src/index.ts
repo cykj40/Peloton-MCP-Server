@@ -3,6 +3,7 @@
 import 'dotenv/config';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { startHttpServer } from './http-server.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -250,7 +251,7 @@ async function main(): Promise<void> {
   console.error('[Init] Peloton MCP Server starting...');
 
   try {
-    runMigrations();
+    await runMigrations();
   } catch (error: unknown) {
     console.error('[Init] Failed to run database migrations:', isError(error) ? error.message : error);
     console.error('[Init] Continuing without database features...');
@@ -338,9 +339,13 @@ async function main(): Promise<void> {
   }
 
   try {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-    console.error('[Server] Peloton MCP server running on stdio');
+    if (process.env.PORT || process.env.HTTP_MODE) {
+      startHttpServer(server);
+    } else {
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+      console.error('[Server] Peloton MCP server running on stdio');
+    }
   } catch (error: unknown) {
     console.error(`[Init] Failed to start: ${isError(error) ? error.message : 'Unknown error'}`);
     process.exit(1);

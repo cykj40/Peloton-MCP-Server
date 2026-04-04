@@ -5,12 +5,12 @@ import { makeMockWorkout } from '../fixtures.js';
 import { setupTestDb, teardownTestDb } from '../testDb.js';
 
 describe('handleCorrelationTool', () => {
-  beforeEach(() => {
-    setupTestDb();
+  beforeEach(async () => {
+    await setupTestDb();
   });
 
-  afterEach(() => {
-    teardownTestDb();
+  afterEach(async () => {
+    await teardownTestDb();
   });
 
   it('peloton_sync_workouts calls client and returns count message', async () => {
@@ -43,7 +43,7 @@ describe('handleCorrelationTool', () => {
 
   it('peloton_analyze_glucose_correlation returns correlation for existing workout', async () => {
     const workout = makeMockWorkout({ id: 'corr-1', created_at: 1_700_000_000, duration: 1800 });
-    upsertWorkout(workout);
+    await upsertWorkout(workout);
     const client = {
       getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
@@ -68,8 +68,8 @@ describe('handleCorrelationTool', () => {
   });
 
   it('peloton_get_discipline_insights returns data in both formats', async () => {
-    upsertWorkout(makeMockWorkout({ id: 'insight-1' }));
-    insertGlucoseCorrelation({
+    await upsertWorkout(makeMockWorkout({ id: 'insight-1' }));
+    await insertGlucoseCorrelation({
       workout_id: 'insight-1',
       workout_timestamp: 1_700_000_000,
       discipline: 'cycling',
@@ -105,8 +105,8 @@ describe('handleCorrelationTool', () => {
   });
 
   it('peloton_detect_hypoglycemia_risk returns alerts', async () => {
-    upsertWorkout(makeMockWorkout({ id: 'alert-1' }));
-    insertGlucoseCorrelation({
+    await upsertWorkout(makeMockWorkout({ id: 'alert-1' }));
+    await insertGlucoseCorrelation({
       workout_id: 'alert-1',
       workout_timestamp: 1_700_000_000,
       discipline: 'running',
@@ -143,7 +143,7 @@ describe('handleCorrelationTool', () => {
 
   it('peloton_analyze_glucose_correlation markdown format shows HIGH RISK interpretation', async () => {
     const workout = makeMockWorkout({ id: 'high-risk', created_at: 1_700_000_000, duration: 1800 });
-    upsertWorkout(workout);
+    await upsertWorkout(workout);
     const client = {
       getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
@@ -168,7 +168,7 @@ describe('handleCorrelationTool', () => {
 
   it('peloton_analyze_glucose_correlation markdown format shows MODERATE RISK interpretation', async () => {
     const workout = makeMockWorkout({ id: 'mod-risk', created_at: 1_700_000_000, duration: 1800 });
-    upsertWorkout(workout);
+    await upsertWorkout(workout);
     const client = {
       getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
@@ -193,7 +193,7 @@ describe('handleCorrelationTool', () => {
 
   it('peloton_analyze_glucose_correlation markdown format shows DELAYED DROP warning', async () => {
     const workout = makeMockWorkout({ id: 'delayed', created_at: 1_700_000_000, duration: 1800 });
-    upsertWorkout(workout);
+    await upsertWorkout(workout);
     const client = {
       getRecentWorkouts: vi.fn(),
     } as unknown as Parameters<typeof handleCorrelationTool>[2];
@@ -217,8 +217,8 @@ describe('handleCorrelationTool', () => {
   });
 
   it('peloton_detect_hypoglycemia_risk shows SEVERE alert for glucose < 54', async () => {
-    upsertWorkout(makeMockWorkout({ id: 'severe-hypo' }));
-    insertGlucoseCorrelation({
+    await upsertWorkout(makeMockWorkout({ id: 'severe-hypo' }));
+    await insertGlucoseCorrelation({
       workout_id: 'severe-hypo',
       workout_timestamp: 1_700_000_000,
       discipline: 'cycling',
@@ -244,6 +244,100 @@ describe('handleCorrelationTool', () => {
     );
 
     expect(result.content[0]?.text).toContain('SEVERE HYPOGLYCEMIA');
+  });
+
+  it('peloton_get_discipline_insights markdown shows HIGH and LOW risk sections', async () => {
+    // High-risk discipline: avg_drop >= 50 → riskLevel = 'high'
+    await upsertWorkout(makeMockWorkout({ id: 'high-1', fitness_discipline: 'running' }));
+    await insertGlucoseCorrelation({
+      workout_id: 'high-1',
+      workout_timestamp: 1_700_000_000,
+      discipline: 'running',
+      duration_seconds: 1800,
+      pre_workout_glucose: 140,
+      glucose_at_start: 135,
+      glucose_nadir: 75,
+      glucose_nadir_time: 90,
+      glucose_4h_post: 100,
+      avg_drop: 55,
+      recovery_time_minutes: 60,
+      notes: null,
+    });
+
+    // Low-risk discipline: avg_drop < 30 → riskLevel = 'low'
+    await upsertWorkout(makeMockWorkout({ id: 'low-1', fitness_discipline: 'yoga' }));
+    await insertGlucoseCorrelation({
+      workout_id: 'low-1',
+      workout_timestamp: 1_700_000_001,
+      discipline: 'yoga',
+      duration_seconds: 1800,
+      pre_workout_glucose: 120,
+      glucose_at_start: 118,
+      glucose_nadir: 110,
+      glucose_nadir_time: 30,
+      glucose_4h_post: 115,
+      avg_drop: 10,
+      recovery_time_minutes: 15,
+      notes: null,
+    });
+
+    const client = {
+      getRecentWorkouts: vi.fn(),
+    } as unknown as Parameters<typeof handleCorrelationTool>[2];
+
+    const result = await handleCorrelationTool(
+      'peloton_get_discipline_insights',
+      { response_format: 'markdown' },
+      client
+    );
+
+    expect(result.content[0]?.text).toContain('HIGH-RISK disciplines');
+    expect(result.content[0]?.text).toContain('LOW-RISK disciplines');
+  });
+
+  it('peloton_get_discipline_insights returns no-data message when no correlations exist', async () => {
+    const client = {
+      getRecentWorkouts: vi.fn(),
+    } as unknown as Parameters<typeof handleCorrelationTool>[2];
+
+    const result = await handleCorrelationTool(
+      'peloton_get_discipline_insights',
+      { response_format: 'markdown' },
+      client
+    );
+
+    expect(result.content[0]?.text).toContain('No correlation data available yet');
+  });
+
+  it('peloton_detect_hypoglycemia_risk returns no-patterns message when no qualifying correlations', async () => {
+    // Insert a correlation with nadir >= 80 and nadir_time <= 120 — does not trigger an alert
+    await upsertWorkout(makeMockWorkout({ id: 'safe-1' }));
+    await insertGlucoseCorrelation({
+      workout_id: 'safe-1',
+      workout_timestamp: 1_700_000_000,
+      discipline: 'cycling',
+      duration_seconds: 1800,
+      pre_workout_glucose: 120,
+      glucose_at_start: 115,
+      glucose_nadir: 95,
+      glucose_nadir_time: 60,
+      glucose_4h_post: 110,
+      avg_drop: 20,
+      recovery_time_minutes: 30,
+      notes: null,
+    });
+
+    const client = {
+      getRecentWorkouts: vi.fn(),
+    } as unknown as Parameters<typeof handleCorrelationTool>[2];
+
+    const result = await handleCorrelationTool(
+      'peloton_detect_hypoglycemia_risk',
+      { response_format: 'markdown' },
+      client
+    );
+
+    expect(result.content[0]?.text).toContain('No hypoglycemia patterns detected');
   });
 
   it('handleCorrelationTool returns error message when client throws error', async () => {

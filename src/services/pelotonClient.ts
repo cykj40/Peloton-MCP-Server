@@ -295,7 +295,7 @@ export class PelotonClient {
 
     for (const workout of workouts) {
       try {
-        upsertWorkout(workout);
+        await upsertWorkout(workout);
       } catch (error: unknown) {
         console.error(
           `[DB] Failed to store workout ${workout.id}:`,
@@ -310,7 +310,7 @@ export class PelotonClient {
   /**
    * Get workouts directly from database (faster, offline-capable).
    */
-  getWorkoutsFromDB(limit = 10): PelotonWorkout[] {
+  async getWorkoutsFromDB(limit = 10): Promise<PelotonWorkout[]> {
     return getRecentWorkoutsFromDB(limit);
   }
 
@@ -359,7 +359,7 @@ export class PelotonClient {
       await this.testConnection();
     }
 
-    const dbCount = getWorkoutCount();
+    const dbCount = await getWorkoutCount();
     let workouts: PelotonWorkout[];
 
     const now = Math.floor(Date.now() / 1000);
@@ -367,7 +367,7 @@ export class PelotonClient {
 
     if (dbCount > 0 && (!params.startDate || params.startDate.getTime() / 1000 < thirtyMinAgo)) {
       console.error(`[DB] Using database for workout search (${dbCount} workouts cached)`);
-      workouts = this.getWorkoutsFromDB(params.limit ?? 50);
+      workouts = await this.getWorkoutsFromDB(params.limit ?? 50);
     } else {
       workouts = await this.getRecentWorkouts(params.limit ?? 50);
     }

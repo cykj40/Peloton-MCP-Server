@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 vi.mock('fs/promises');
 
@@ -8,8 +8,22 @@ import { loadToken, saveToken, isTokenExpired, clearToken, PelotonAuthToken } fr
 const fsMock = vi.mocked(fs);
 
 describe('tokenStore', () => {
+  let originalEnvToken: string | undefined;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    // Remove env var so file-based tests are not short-circuited
+    originalEnvToken = process.env.PELOTON_BEARER_TOKEN;
+    delete process.env.PELOTON_BEARER_TOKEN;
+  });
+
+  afterEach(() => {
+    // Restore env var
+    if (originalEnvToken !== undefined) {
+      process.env.PELOTON_BEARER_TOKEN = originalEnvToken;
+    } else {
+      delete process.env.PELOTON_BEARER_TOKEN;
+    }
   });
 
   describe('loadToken', () => {
@@ -61,6 +75,52 @@ describe('tokenStore', () => {
       const result = await loadToken();
       expect(result).toBeNull();
     });
+
+    it('returns token from PELOTON_BEARER_TOKEN env var when valid', async () => {
+      // Create a fake JWT with a future exp
+      const futureExp = Math.floor((Date.now() + 2 * 60 * 60 * 1000) / 1000);
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url');
+      const payload = Buffer.from(
+        JSON.stringify({ exp: futureExp, sub: 'user-from-env', 'http://onepeloton.com/user_id': 'env-user-id' })
+      ).toString('base64url');
+      const fakeJwt = `${header}.${payload}.fakesig`;
+
+      process.env.PELOTON_BEARER_TOKEN = fakeJwt;
+
+      const result = await loadToken();
+      expect(result).not.toBeNull();
+      expect(result?.access_token).toBe(fakeJwt);
+      expect(fsMock.readFile).not.toHaveBeenCalled();
+    });
+
+    it('returns token with default expiry and unknown user_id when JWT payload is invalid JSON', async () => {
+      // 'YQ' decodes to 'a' in base64 — valid base64 but invalid JSON, triggers catch blocks
+      process.env.PELOTON_BEARER_TOKEN = 'eyJhbGciOiJub25lIn0.YQ.sig';
+
+      const result = await loadToken();
+      expect(result).not.toBeNull();
+      expect(result?.user_id).toBe('unknown');
+      // Expiry is defaulted to 2 days from now
+      expect(result!.expires_at).toBeGreaterThan(Date.now());
+    });
+
+    it('falls back to file when PELOTON_BEARER_TOKEN env var is expired', async () => {
+      // Create a fake JWT with a past exp
+      const pastExp = Math.floor((Date.now() - 60 * 1000) / 1000);
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify({ exp: pastExp, sub: 'expired-user' })).toString('base64url');
+      const expiredJwt = `${header}.${payload}.fakesig`;
+
+      process.env.PELOTON_BEARER_TOKEN = expiredJwt;
+
+      const error: NodeJS.ErrnoException = new Error('ENOENT');
+      error.code = 'ENOENT';
+      fsMock.readFile.mockRejectedValue(error);
+
+      const result = await loadToken();
+      expect(result).toBeNull();
+      expect(fsMock.readFile).toHaveBeenCalled();
+    });
   });
 
   describe('saveToken', () => {
@@ -89,6 +149,39 @@ describe('tokenStore', () => {
 
       expect(fsMock.mkdir).toHaveBeenCalled();
       expect(fsMock.writeFile).toHaveBeenCalled();
+    });
+
+    it('logs Fly.io hint when FLY_APP_NAME is set', async () => {
+      const validToken: PelotonAuthToken = {
+        access_token: 'eyJvalid',
+        token_type: 'Bearer',
+        expires_at: Date.now() + 60000,
+        user_id: 'user123',
+      };
+      fsMock.mkdir.mockResolvedValue(undefined);
+      fsMock.writeFile.mockResolvedValue(undefined);
+      process.env.FLY_APP_NAME = 'peloton-mcp-test';
+
+      try {
+        await saveToken(validToken);
+      } finally {
+        delete process.env.FLY_APP_NAME;
+      }
+
+      expect(fsMock.writeFile).toHaveBeenCalled();
+    });
+
+    it('throws CookieStoreError when writeFile fails', async () => {
+      const validToken: PelotonAuthToken = {
+        access_token: 'eyJvalid',
+        token_type: 'Bearer',
+        expires_at: Date.now() + 60000,
+        user_id: 'user123',
+      };
+      fsMock.mkdir.mockResolvedValue(undefined);
+      fsMock.writeFile.mockRejectedValue(new Error('disk full'));
+
+      await expect(saveToken(validToken)).rejects.toThrow('Failed to save token');
     });
   });
 
@@ -139,6 +232,14 @@ describe('tokenStore', () => {
     it('does not throw when file does not exist', async () => {
       const error: NodeJS.ErrnoException = new Error('ENOENT');
       error.code = 'ENOENT';
+      fsMock.unlink.mockRejectedValue(error);
+
+      await expect(clearToken()).resolves.not.toThrow();
+    });
+
+    it('logs error for non-ENOENT failures', async () => {
+      const error: NodeJS.ErrnoException = new Error('Permission denied');
+      error.code = 'EPERM';
       fsMock.unlink.mockRejectedValue(error);
 
       await expect(clearToken()).resolves.not.toThrow();
