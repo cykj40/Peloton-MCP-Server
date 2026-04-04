@@ -340,7 +340,7 @@ async function main(): Promise<void> {
 
   try {
     if (process.env.PORT || process.env.HTTP_MODE) {
-      startHttpServer(server);
+      await startHttpServer(server);
     } else {
       const transport = new StdioServerTransport();
       await server.connect(transport);
