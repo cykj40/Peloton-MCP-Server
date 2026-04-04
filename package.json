@@ -27,10 +27,12 @@
   "author": "Cyrus Jalili Khiabani",
   "license": "MIT",
   "dependencies": {
+    "@hono/node-server": "^1.19.12",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "axios": "^1.7.2",
     "better-sqlite3": "^12.6.2",
     "express": "^4.21.2",
+    "hono": "^4.12.10",
     "playwright": "^1.48.0",
     "zod": "^3.24.1"
   },
