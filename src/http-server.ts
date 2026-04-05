@@ -1,5 +1,6 @@
+import http from 'node:http';
 import { Hono } from 'hono';
-import { serve, type HttpBindings } from '@hono/node-server';
+import { getRequestListener, type HttpBindings } from '@hono/node-server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -10,8 +11,7 @@ import { isError } from './types/errors.js';
 type Env = { Bindings: HttpBindings };
 
 export function createHttpApp(
-  _mcpServer: Server,
-  httpTransport: StreamableHTTPServerTransport
+  _mcpServer: Server
 ): Hono<Env> {
   const app = new Hono<Env>();
 
@@ -166,40 +166,6 @@ export function createHttpApp(
     return c.json({ access_token: mcpAuthToken, token_type: 'bearer', expires_in: 3600 });
   });
 
-  // Streamable HTTP MCP endpoint — POST (tool calls, requests)
-  app.post('/mcp', async (c) => {
-    if (!isAuthorized(c.req.header('authorization'))) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    const req = c.env.incoming;
-    const res = c.env.outgoing;
-    const body: unknown = await c.req.json();
-    await httpTransport.handleRequest(req, res, body);
-    return new Response(null);
-  });
-
-  // Streamable HTTP MCP endpoint — GET (SSE stream for server-sent notifications)
-  app.get('/mcp', async (c) => {
-    if (!isAuthorized(c.req.header('authorization'))) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    const req = c.env.incoming;
-    const res = c.env.outgoing;
-    await httpTransport.handleRequest(req, res);
-    return new Response(null);
-  });
-
-  // Streamable HTTP MCP endpoint — DELETE (session termination)
-  app.delete('/mcp', async (c) => {
-    if (!isAuthorized(c.req.header('authorization'))) {
-      return c.json({ error: 'Unauthorized' }, 401);
-    }
-    const req = c.env.incoming;
-    const res = c.env.outgoing;
-    await httpTransport.handleRequest(req, res);
-    return new Response(null);
-  });
-
   return app;
 }
 
@@ -212,9 +178,52 @@ export async function startHttpServer(mcpServer: Server): Promise<void> {
   // Cast needed: SDK's exactOptionalPropertyTypes on onclose differs from Transport interface
   await mcpServer.connect(httpTransport as unknown as Transport);
 
-  const app = createHttpApp(mcpServer, httpTransport);
+  const app = createHttpApp(mcpServer);
+  const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
 
-  serve({ fetch: app.fetch, port: PORT, hostname: '0.0.0.0' }, () => {
+  // Get a plain Node.js request listener from the Hono app for non-MCP routes
+  const honoListener = getRequestListener(app.fetch);
+
+  const server = http.createServer(async (req, res) => {
+    const urlPath = new URL(req.url ?? '/', `http://localhost`).pathname;
+
+    // /mcp must be handled by the transport directly — Hono would cause ERR_HTTP_HEADERS_SENT
+    // because the transport writes to the raw Node.js res and Hono would try to write again.
+    if (urlPath === '/mcp') {
+      if (mcpAuthToken && req.headers['authorization'] !== `Bearer ${mcpAuthToken}`) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+
+      if (req.method === 'POST') {
+        const chunks: Buffer[] = [];
+        req.on('data', (chunk: Buffer) => chunks.push(chunk));
+        req.on('end', () => {
+          void (async () => {
+            try {
+              const body = JSON.parse(Buffer.concat(chunks).toString()) as unknown;
+              await httpTransport.handleRequest(req, res, body);
+            } catch {
+              if (!res.headersSent) {
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Invalid JSON' }));
+              }
+            }
+          })();
+        });
+      } else {
+        // GET (SSE notifications) or DELETE (session termination)
+        await httpTransport.handleRequest(req, res);
+      }
+      return;
+    }
+
+    // All other routes go through Hono
+    await honoListener(req, res);
+  });
+
+  server.listen(PORT, '0.0.0.0', () => {
     console.error(`[Server] Peloton MCP HTTP server running on port ${PORT}`);
     console.error(`[Server] MCP endpoint: http://localhost:${PORT}/mcp`);
     console.error(`[Server] Health check: http://localhost:${PORT}/health`);
