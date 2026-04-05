@@ -162,7 +162,7 @@ export async function startHttpServer(mcpServer: Server): Promise<void> {
 
   const app = createHttpApp(mcpServer, httpTransport);
 
-  serve({ fetch: app.fetch, port: PORT }, () => {
+  serve({ fetch: app.fetch, port: PORT, hostname: '0.0.0.0' }, () => {
     console.error(`[Server] Peloton MCP HTTP server running on port ${PORT}`);
     console.error(`[Server] MCP endpoint: http://localhost:${PORT}/mcp`);
     console.error(`[Server] Health check: http://localhost:${PORT}/health`);
