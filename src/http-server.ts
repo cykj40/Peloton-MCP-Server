@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { loginWithPassword } from './services/pelotonAuth.js';
-import { saveToken } from './services/tokenStore.js';
+import { saveToken, setRuntimeToken } from './services/tokenStore.js';
 import { isError } from './types/errors.js';
 
 type Env = { Bindings: HttpBindings };
@@ -50,6 +50,58 @@ export function createHttpApp(
         500
       );
     }
+  });
+
+  // Update Peloton Bearer token at runtime — no secret redeploy needed
+  app.post('/update-peloton-token', async (c) => {
+    if (!isAuthorized(c.req.header('authorization'))) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+
+    if (typeof body !== 'object' || body === null || !('token' in body)) {
+      return c.json({ error: 'Missing required field: token' }, 400);
+    }
+
+    const token = String((body as { token: unknown }).token).trim();
+    if (!token.startsWith('eyJ')) {
+      return c.json({ error: 'Invalid token: must be a JWT (starts with eyJ)' }, 400);
+    }
+
+    // Parse expiry and user_id from the JWT payload
+    let expiresAt: number;
+    let userId: string = 'unknown';
+    try {
+      const payload: unknown = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64').toString());
+      if (typeof payload === 'object' && payload !== null) {
+        const p = payload as Record<string, unknown>;
+        expiresAt = typeof p['exp'] === 'number'
+          ? p['exp'] * 1000
+          : Date.now() + 2 * 24 * 60 * 60 * 1000;
+        const uid = p['http://onepeloton.com/user_id'] ?? p['sub'];
+        if (typeof uid === 'string') userId = uid;
+      } else {
+        expiresAt = Date.now() + 2 * 24 * 60 * 60 * 1000;
+      }
+    } catch {
+      expiresAt = Date.now() + 2 * 24 * 60 * 60 * 1000;
+    }
+
+    const authToken = { access_token: token, token_type: 'Bearer', expires_at: expiresAt, user_id: userId };
+    setRuntimeToken(authToken);
+    await saveToken(authToken);
+
+    return c.json({
+      success: true,
+      user_id: userId,
+      expires_at: new Date(expiresAt).toISOString(),
+    });
   });
 
   // OAuth 2.0 discovery — required by claude.ai remote MCP connectors

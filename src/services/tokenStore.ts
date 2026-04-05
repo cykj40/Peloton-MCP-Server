@@ -15,6 +15,18 @@ export interface PelotonAuthToken {
 const TOKEN_DIR = path.join(process.env.APPDATA || os.homedir(), '.peloton');
 const TOKEN_FILE = path.join(TOKEN_DIR, 'token.json');
 
+// In-memory override — set via /update-peloton-token endpoint, survives until process restart
+let runtimeToken: PelotonAuthToken | null = null;
+
+/**
+ * Set an in-memory token override. Takes priority over env var and file.
+ * Use this to update the token at runtime without redeploying secrets.
+ */
+export function setRuntimeToken(token: PelotonAuthToken): void {
+  runtimeToken = token;
+  console.error(`[Token] Runtime token set for user ${token.user_id} (expires ${new Date(token.expires_at).toISOString()})`);
+}
+
 const PelotonAuthTokenSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().optional(),
@@ -67,7 +79,18 @@ function parseJwtUserId(token: string): string {
  * Returns null if no valid token found.
  */
 export async function loadToken(): Promise<PelotonAuthToken | null> {
-  // 1. Check env var first (Fly.io / production override)
+  // 0. Check in-memory runtime token first (set via /update-peloton-token endpoint)
+  if (runtimeToken && !isTokenExpired(runtimeToken)) {
+    const minutesRemaining = Math.floor((runtimeToken.expires_at - Date.now()) / (60 * 1000));
+    console.error(`[Token] Using runtime token (expires in ${minutesRemaining} minutes)`);
+    return runtimeToken;
+  }
+  if (runtimeToken && isTokenExpired(runtimeToken)) {
+    console.error('[Token] Runtime token expired, falling back to env/file');
+    runtimeToken = null;
+  }
+
+  // 1. Check env var (Fly.io / production override)
   const envToken = process.env.PELOTON_BEARER_TOKEN;
   if (envToken && envToken.trim().length > 0) {
     const token = envToken.trim();
