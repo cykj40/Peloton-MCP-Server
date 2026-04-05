@@ -2,7 +2,6 @@
 
 try { await import('dotenv/config'); } catch {}
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { startHttpServer } from './http-server.js';
 import {
   CallToolRequestSchema,
@@ -336,13 +335,7 @@ async function main(): Promise<void> {
   }
 
   try {
-    if (process.env.PORT || process.env.HTTP_MODE) {
-      await startHttpServer(createMcpServer);
-    } else {
-      const transport = new StdioServerTransport();
-      await createMcpServer().connect(transport);
-      console.error('[Server] Peloton MCP server running on stdio');
-    }
+    await startHttpServer(createMcpServer);
   } catch (error: unknown) {
     console.error(`[Init] Failed to start: ${isError(error) ? error.message : 'Unknown error'}`);
     process.exit(1);
