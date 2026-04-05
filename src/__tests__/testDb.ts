@@ -3,7 +3,7 @@ import { runMigrations } from '../db/migrations.js';
 
 export async function setupTestDb(): Promise<void> {
   await closeDatabase();
-  process.env.DATABASE_URL = 'file::memory:';
+  process.env.TURSO_DATABASE_URL = 'file::memory:';
   delete process.env.TURSO_AUTH_TOKEN;
   await runMigrations();
 }

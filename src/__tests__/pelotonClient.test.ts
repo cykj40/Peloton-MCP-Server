@@ -6,13 +6,30 @@ import { makeMockWorkout } from './fixtures.js';
 import { setupTestDb, teardownTestDb } from './testDb.js';
 
 describe('PelotonClient', () => {
+  let originalEnvBearerToken: string | undefined;
+  let originalEnvSessionCookie: string | undefined;
+
   beforeEach(async () => {
+    originalEnvBearerToken = process.env.PELOTON_BEARER_TOKEN;
+    originalEnvSessionCookie = process.env.PELOTON_SESSION_COOKIE;
+    delete process.env.PELOTON_BEARER_TOKEN;
+    delete process.env.PELOTON_SESSION_COOKIE;
     await setupTestDb();
     PelotonClient.clearCache();
     nock.cleanAll();
   });
 
   afterEach(async () => {
+    if (originalEnvBearerToken !== undefined) {
+      process.env.PELOTON_BEARER_TOKEN = originalEnvBearerToken;
+    } else {
+      delete process.env.PELOTON_BEARER_TOKEN;
+    }
+    if (originalEnvSessionCookie !== undefined) {
+      process.env.PELOTON_SESSION_COOKIE = originalEnvSessionCookie;
+    } else {
+      delete process.env.PELOTON_SESSION_COOKIE;
+    }
     nock.cleanAll();
     await teardownTestDb();
   });
@@ -65,6 +82,26 @@ describe('PelotonClient', () => {
     expect(workouts[0]?.name).toBe('Ride Title');
     expect(await getWorkoutCount()).toBe(1);
     expect((await getWorkoutById('workout-1'))?.instructor?.name).toBe('Alex');
+  });
+
+  it('getRecentWorkouts sends peloton_session_id cookie when available', async () => {
+    process.env.PELOTON_SESSION_COOKIE = 'session-cookie-123';
+
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .matchHeader('authorization', 'Bearer eyJhbGciOiJSUzI1NiJ9.fake.token')
+      .reply(200, { username: 'testuser', id: 'user123' });
+
+    nock(PELOTON_API_URL)
+      .get('/api/user/user123/workouts')
+      .query(true)
+      .matchHeader('cookie', 'peloton_session_id=session-cookie-123')
+      .reply(200, { data: [] });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const workouts = await client.getRecentWorkouts(10);
+
+    expect(workouts).toEqual([]);
   });
 
   it('getRecentWorkouts retries after rate limit', async () => {

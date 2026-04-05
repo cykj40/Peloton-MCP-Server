@@ -1,5 +1,6 @@
 import { getDatabase } from './database.js';
 import { GlucoseCorrelation, MuscleGroupData, MuscleSnapshot, PelotonWorkout } from '../types/index.js';
+import type { PelotonAuthToken } from '../services/tokenStore.js';
 import {
   GlucoseCorrelationSchema,
   MuscleSnapshotRowSchema,
@@ -87,6 +88,33 @@ function parseMuscleGroupData(value: unknown): MuscleGroupData | null {
   return result;
 }
 
+function parseStoredAuthToken(row: Record<string, unknown>): PelotonAuthToken | null {
+  const accessToken = row['access_token'];
+  const sessionId = row['session_id'];
+  const refreshToken = row['refresh_token'];
+  const tokenType = row['token_type'];
+  const expiresAt = row['expires_at'];
+  const userId = row['user_id'];
+
+  if (
+    typeof accessToken !== 'string' ||
+    typeof tokenType !== 'string' ||
+    typeof userId !== 'string' ||
+    typeof expiresAt !== 'number'
+  ) {
+    return null;
+  }
+
+  return {
+    access_token: accessToken,
+    ...(typeof sessionId === 'string' && sessionId.length > 0 ? { session_id: sessionId } : {}),
+    ...(typeof refreshToken === 'string' && refreshToken.length > 0 ? { refresh_token: refreshToken } : {}),
+    token_type: tokenType,
+    expires_at: expiresAt,
+    user_id: userId,
+  };
+}
+
 /**
  * Insert or update a workout in the database.
  */
@@ -112,6 +140,58 @@ export async function upsertWorkout(workout: PelotonWorkout): Promise<void> {
       JSON.stringify(workout),
     ],
   });
+}
+
+/**
+ * Insert or update the single active Peloton auth token.
+ */
+export async function upsertAuthToken(token: PelotonAuthToken): Promise<void> {
+  const db = getDatabase();
+  await db.execute({
+    sql: `
+      INSERT OR REPLACE INTO auth_tokens (
+        id, access_token, session_id, refresh_token, token_type, expires_at, user_id, updated_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `,
+    args: [
+      token.access_token,
+      token.session_id ?? null,
+      token.refresh_token ?? null,
+      token.token_type,
+      token.expires_at,
+      token.user_id,
+    ],
+  });
+}
+
+/**
+ * Load the single active Peloton auth token from the database.
+ */
+export async function getStoredAuthToken(): Promise<PelotonAuthToken | null> {
+  const db = getDatabase();
+  const result = await db.execute({
+    sql: `
+      SELECT access_token, session_id, refresh_token, token_type, expires_at, user_id
+      FROM auth_tokens
+      WHERE id = 1
+      LIMIT 1
+    `,
+  });
+
+  const row = result.rows[0];
+  if (!row) {
+    return null;
+  }
+
+  return parseStoredAuthToken(row as Record<string, unknown>);
+}
+
+/**
+ * Delete the stored Peloton auth token.
+ */
+export async function deleteStoredAuthToken(): Promise<void> {
+  const db = getDatabase();
+  await db.execute('DELETE FROM auth_tokens WHERE id = 1');
 }
 
 /**

@@ -91,6 +91,20 @@ export async function runMigrations(): Promise<void> {
     ON glucose_correlations(workout_timestamp)
   `);
 
+  // Create auth_tokens table for the single active Peloton auth credential set.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS auth_tokens (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      access_token TEXT NOT NULL,
+      session_id TEXT,
+      refresh_token TEXT,
+      token_type TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      user_id TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   console.error('[Migrations] ✅ Database migrations completed');
 
   // Log table counts

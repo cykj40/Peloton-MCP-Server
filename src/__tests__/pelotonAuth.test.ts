@@ -20,11 +20,19 @@ describe('pelotonAuth', () => {
           username_or_email: 'test@example.com',
           password: 'password123',
         })
-        .reply(200, { user_id: 'user123' }, { Authorization: 'Bearer eyJhbGciOiJSUzI1NiJ9.fake.token' });
+        .reply(
+          200,
+          { user_id: 'user123' },
+          {
+            Authorization: 'Bearer eyJhbGciOiJSUzI1NiJ9.fake.token',
+            'Set-Cookie': 'peloton_session_id=session-123; Path=/; Secure',
+          }
+        );
 
       const result = await loginWithPassword('test@example.com', 'password123');
 
       expect(result.access_token).toBe('eyJhbGciOiJSUzI1NiJ9.fake.token');
+      expect(result.session_id).toBe('session-123');
       expect(result.token_type).toBe('Bearer');
       expect(result.user_id).toBe('user123');
     });
@@ -68,12 +76,20 @@ describe('pelotonAuth', () => {
 
       nock(PELOTON_API_URL)
         .post('/auth/token/refresh', { refresh_token: 'refresh123' })
-        .reply(200, {}, { Authorization: 'Bearer eyJnew.token.here' });
+        .reply(
+          200,
+          {},
+          {
+            Authorization: 'Bearer eyJnew.token.here',
+            'Set-Cookie': 'peloton_session_id=session-refreshed; Path=/; Secure',
+          }
+        );
 
       const result = await refreshToken(token);
 
       expect(result).not.toBeNull();
       expect(result?.access_token).toBe('eyJnew.token.here');
+      expect(result?.session_id).toBe('session-refreshed');
       expect(result?.refresh_token).toBe('refresh123');
     });
 

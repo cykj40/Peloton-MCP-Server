@@ -272,17 +272,17 @@ describe('db queries', () => {
     expect(result[0]?.id).toBe('valid2');
   });
 
-  it('getDatabase throws when DATABASE_URL is not set', async () => {
+  it('getDatabase throws when TURSO_DATABASE_URL is not set', async () => {
     await closeDatabase();
-    const savedUrl = process.env.DATABASE_URL;
-    delete process.env.DATABASE_URL;
+    const savedUrl = process.env.TURSO_DATABASE_URL;
+    delete process.env.TURSO_DATABASE_URL;
     try {
-      expect(() => getDatabase()).toThrow('DATABASE_URL environment variable is required');
+      expect(() => getDatabase()).toThrow('TURSO_DATABASE_URL environment variable is required');
     } finally {
-      process.env.DATABASE_URL = savedUrl;
+      process.env.TURSO_DATABASE_URL = savedUrl;
       await closeDatabase();
       // Restore DB for teardown
-      process.env.DATABASE_URL = 'file::memory:';
+      process.env.TURSO_DATABASE_URL = 'file::memory:';
     }
   });
 
@@ -298,7 +298,7 @@ describe('db queries', () => {
       process.env.TURSO_AUTH_TOKEN = savedToken;
       await closeDatabase();
       // Restore for teardown
-      process.env.DATABASE_URL = 'file::memory:';
+      process.env.TURSO_DATABASE_URL = 'file::memory:';
     }
   });
 

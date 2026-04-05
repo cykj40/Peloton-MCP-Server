@@ -4,9 +4,7 @@ import { getRequestListener, type HttpBindings } from '@hono/node-server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { loginWithPassword } from './services/pelotonAuth.js';
-import { saveToken, setRuntimeToken } from './services/tokenStore.js';
-import { isError } from './types/errors.js';
+import { loadToken, saveToken, setRuntimeToken } from './services/tokenStore.js';
 
 type Env = { Bindings: HttpBindings };
 
@@ -27,27 +25,13 @@ export function createHttpApp(): Hono<Env> {
 
   // Token refresh endpoint
   app.post('/refresh-token', async (c) => {
-    const username = process.env.PELOTON_USERNAME;
-    const password = process.env.PELOTON_PASSWORD;
-
-    if (!username || !password) {
-      return c.json({ success: false, error: 'PELOTON_USERNAME and PELOTON_PASSWORD not set' }, 400);
-    }
-
-    try {
-      const token = await loginWithPassword(username, password);
-      await saveToken(token);
-      return c.json({
-        success: true,
-        expires_at: new Date(token.expires_at).toISOString(),
-        user_id: token.user_id,
-      });
-    } catch (error: unknown) {
-      return c.json(
-        { success: false, error: isError(error) ? error.message : 'Unknown error' },
-        500
-      );
-    }
+    return c.json(
+      {
+        success: false,
+        error: 'Automatic /auth/login refresh is disabled. Provide a fresh Authorization Bearer token via peloton_refresh_token or /update-peloton-token.',
+      },
+      410
+    );
   });
 
   // Update Peloton Bearer token at runtime — no secret redeploy needed
@@ -91,7 +75,14 @@ export function createHttpApp(): Hono<Env> {
       expiresAt = Date.now() + 2 * 24 * 60 * 60 * 1000;
     }
 
-    const authToken = { access_token: token, token_type: 'Bearer', expires_at: expiresAt, user_id: userId };
+    const existingToken = await loadToken();
+    const authToken = {
+      access_token: token,
+      ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
+      token_type: 'Bearer',
+      expires_at: expiresAt,
+      user_id: userId,
+    };
     setRuntimeToken(authToken);
     await saveToken(authToken);
 

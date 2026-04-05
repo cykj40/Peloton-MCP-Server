@@ -19,6 +19,20 @@ function parseJwtExpiry(token: string): number {
   return Date.now() + (2 * 24 * 60 * 60 * 1000);
 }
 
+function extractSessionId(setCookieHeader: string | string[] | undefined): string | undefined {
+  if (!setCookieHeader) return undefined;
+
+  const headerValues = Array.isArray(setCookieHeader) ? setCookieHeader : [setCookieHeader];
+  for (const headerValue of headerValues) {
+    const match = /(?:^|;\s*)peloton_session_id=([^;]+)/i.exec(headerValue);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Login with password and return JWT Bearer token.
  * Peloton uses Auth0 and returns JWT tokens via the Authorization header.
@@ -53,6 +67,7 @@ export async function loginWithPassword(
     }
 
     const bearerToken = authHeader.substring(7);
+    const sessionId = extractSessionId(response.headers['set-cookie'] as string | string[] | undefined);
     const userId = typeof response.data === 'object' && response.data !== null && 'user_id' in response.data
       ? String((response.data as { user_id?: string }).user_id)
       : 'unknown';
@@ -61,6 +76,7 @@ export async function loginWithPassword(
 
     return {
       access_token: bearerToken,
+      ...(sessionId ? { session_id: sessionId } : {}),
       token_type: 'Bearer',
       expires_at: parseJwtExpiry(bearerToken),
       user_id: userId,
@@ -117,11 +133,13 @@ export async function refreshToken(
       const authHeader = response.headers['authorization'] as string | undefined;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const bearerToken = authHeader.substring(7);
+        const sessionId = extractSessionId(response.headers['set-cookie'] as string | string[] | undefined);
         console.error('[Auth] Successfully refreshed token via /auth/token/refresh');
 
         return {
           access_token: bearerToken,
           refresh_token: token.refresh_token,
+          ...(sessionId || token.session_id ? { session_id: sessionId ?? token.session_id } : {}),
           token_type: 'Bearer',
           expires_at: parseJwtExpiry(bearerToken),
           user_id: token.user_id,
@@ -146,4 +164,3 @@ export async function refreshToken(
   console.error('[Auth] Cannot refresh token: no refresh_token and no credentials available');
   return null;
 }
-

@@ -15,7 +15,6 @@ import {
   PelotonWorkoutsListResponseSchema,
 } from '../schemas/api.js';
 import { loadToken, saveToken, isTokenExpired, PelotonAuthToken } from './tokenStore.js';
-import { refreshToken } from './pelotonAuth.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
@@ -179,6 +178,60 @@ export class PelotonClient {
     this.bearerToken = credential;
   }
 
+  private buildTokenFromConstructor(): PelotonAuthToken | null {
+    let expiresAt = Date.now() + 25 * 24 * 60 * 60 * 1000;
+    let userId = 'unknown';
+    const parts = this.bearerToken.split('.');
+
+    if (parts.length === 3 && parts[1]) {
+      try {
+        const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as Record<string, unknown>;
+        if (typeof payload['exp'] === 'number') {
+          expiresAt = payload['exp'] * 1000;
+        }
+        if (typeof payload['http://onepeloton.com/user_id'] === 'string') {
+          userId = payload['http://onepeloton.com/user_id'];
+        }
+      } catch {
+        // Keep the default 25-day TTL for manually supplied tokens if the payload cannot be parsed locally.
+      }
+    }
+
+    const sessionCookie = process.env.PELOTON_SESSION_COOKIE?.trim();
+    const sessionId = sessionCookie
+      ? (sessionCookie.includes('=')
+          ? sessionCookie.replace(/^\s*peloton_session_id=/i, '').split(';')[0]?.trim()
+          : sessionCookie)
+      : undefined;
+
+    return {
+      access_token: this.bearerToken,
+      ...(sessionId ? { session_id: sessionId } : {}),
+      token_type: 'Bearer',
+      expires_at: expiresAt,
+      user_id: userId,
+    };
+  }
+
+  private async getActiveToken(): Promise<PelotonAuthToken> {
+    const storedToken = this.cachedToken || await loadToken();
+    if (storedToken && !isTokenExpired(storedToken)) {
+      this.cachedToken = storedToken;
+      return storedToken;
+    }
+
+    const constructorToken = this.buildTokenFromConstructor();
+    if (constructorToken && !isTokenExpired(constructorToken)) {
+      this.cachedToken = constructorToken;
+      await saveToken(constructorToken);
+      return constructorToken;
+    }
+
+    throw new PelotonAuthError(
+      'No valid Peloton Bearer token found. Use peloton_refresh_token with a fresh Authorization Bearer token from members.onepeloton.com.'
+    );
+  }
+
   private async getAuthHeaders(): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
       'User-Agent': 'PelotonMCP/1.0',
@@ -186,35 +239,11 @@ export class PelotonClient {
       'peloton-platform': 'web',
     };
 
-    // 1. Try to load token from tokenStore
-    let token = this.cachedToken || await loadToken();
-
-    // 2. If token exists and NOT expired, use it
-    if (token && !isTokenExpired(token)) {
-      headers['Authorization'] = `Bearer ${token.access_token}`;
-      this.cachedToken = token;
-      return headers;
+    const token = await this.getActiveToken();
+    headers['Authorization'] = `Bearer ${token.access_token}`;
+    if (token.session_id) {
+      headers['Cookie'] = `peloton_session_id=${token.session_id}`;
     }
-
-    // 3. If token exists but expired, attempt refresh
-    if (token && isTokenExpired(token)) {
-      console.error('[Client] Token expired, attempting refresh...');
-      const username = process.env.PELOTON_USERNAME;
-      const password = process.env.PELOTON_PASSWORD;
-
-      const refreshedToken = await refreshToken(token, username, password);
-      if (refreshedToken) {
-        await saveToken(refreshedToken);
-        this.cachedToken = refreshedToken;
-        headers['Authorization'] = `Bearer ${refreshedToken.access_token}`;
-        return headers;
-      }
-
-      console.error('[Client] Token refresh failed, falling back to constructor credential');
-    }
-
-    // 4. If no token, fall back to bearer from constructor
-    headers['Authorization'] = `Bearer ${this.bearerToken}`;
 
     return headers;
   }
@@ -224,6 +253,7 @@ export class PelotonClient {
    */
   async testConnection(): Promise<{ success: boolean; details: string; userId?: string }> {
     try {
+      const token = await this.getActiveToken();
       const config: AxiosRequestConfig = {
         method: 'GET',
         url: `${PELOTON_API_URL}/api/me`,
@@ -242,9 +272,10 @@ export class PelotonClient {
       }
 
       this.userId = parsed.data.id;
+      const expiresAt = new Date(token.expires_at).toISOString();
       return {
         success: true,
-        details: `Connected as user: ${parsed.data.username}`,
+        details: `Connected as user: ${parsed.data.username}. Bearer token expires at ${expiresAt}.${token.session_id ? ' Session cookie present.' : ' No session cookie stored.'}`,
         userId: parsed.data.id,
       };
     } catch (error: unknown) {

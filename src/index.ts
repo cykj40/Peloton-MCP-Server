@@ -28,7 +28,6 @@ import {
   handleCorrelationTool,
   CorrelationToolName,
 } from './tools/correlations.js';
-import { loginWithPassword } from './services/pelotonAuth.js';
 import { loadToken, saveToken, PelotonAuthToken } from './services/tokenStore.js';
 import { runMigrations } from './db/migrations.js';
 import {
@@ -50,9 +49,7 @@ let authFailureReason: string | null = null;
 const refreshTokenTool = {
   name: 'peloton_refresh_token' as const,
   description:
-    'Refresh the Peloton JWT Bearer token. If PELOTON_USERNAME and PELOTON_PASSWORD are set in env, ' +
-    'automatically logs in to get a fresh JWT Bearer token. Otherwise, accepts a manually provided ' +
-    'Bearer token (JWT). ' +
+    'Store a Peloton JWT Bearer token for live API calls. ' +
     'To get a Bearer token manually: log into members.onepeloton.com, open DevTools > Network tab, ' +
     'refresh the page, click any api.onepeloton.com request, find the Authorization header, ' +
     'and copy the token after "Bearer ". Token must start with "eyJ".',
@@ -61,10 +58,10 @@ const refreshTokenTool = {
     properties: {
       token: {
         type: 'string',
-        description: 'Optional: The Bearer JWT token (starts with eyJ...). If not provided, will use PELOTON_USERNAME and PELOTON_PASSWORD from env.',
+        description: 'Required: The Bearer JWT token (starts with eyJ...) copied from members.onepeloton.com.',
       },
     },
-    required: [],
+    required: ['token'],
   },
 };
 
@@ -138,9 +135,7 @@ function createMcpServer(): Server {
 
     try {
       let authToken: PelotonAuthToken;
-      let usedMethod: 'manual' | 'auto' = 'manual';
 
-      // If manual token provided, use it
       if (manualToken && typeof manualToken === 'string' && manualToken.trim().length > 0) {
         const credential = manualToken.trim();
         const testClient = new PelotonClient(credential);
@@ -154,43 +149,29 @@ function createMcpServer(): Server {
         pelotonClient = testClient;
         authFailureReason = null;
 
+        const existingToken = await loadToken();
         // Create token structure for display
         authToken = {
           access_token: credential,
+          ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
           token_type: 'Bearer',
-          expires_at: Date.now() + (2 * 24 * 60 * 60 * 1000),
+          expires_at: Date.now() + (25 * 24 * 60 * 60 * 1000),
           user_id: result.userId ?? 'unknown',
         };
         await saveToken(authToken);
-        usedMethod = 'manual';
       } else {
-        // Auto-refresh using env vars
-        const username = process.env.PELOTON_USERNAME;
-        const password = process.env.PELOTON_PASSWORD;
-
-        if (!username || !password) {
-          return {
-            content: [{ type: 'text', text: 'Error: No token provided and PELOTON_USERNAME/PELOTON_PASSWORD not set in environment.\n\nEither:\n1. Provide a token parameter, or\n2. Set PELOTON_USERNAME and PELOTON_PASSWORD in your .env file' }],
-          };
-        }
-
-        console.error('[Tool] Attempting auto-login with credentials from env...');
-        authToken = await loginWithPassword(username, password);
-        await saveToken(authToken);
-
-        pelotonClient = new PelotonClient(authToken.access_token);
-        authFailureReason = null;
-        usedMethod = 'auto';
+        return {
+          content: [{ type: 'text', text: 'Error: token is required. Copy the Authorization Bearer token from members.onepeloton.com and pass it to peloton_refresh_token.' }],
+        };
       }
 
       const expiresDate = new Date(authToken.expires_at).toLocaleString();
-      const authMethod = usedMethod === 'auto' ? 'Auto-login' : 'Manual token';
 
       return {
         content: [{
           type: 'text',
           text: `Authentication refreshed successfully!\n\n` +
-            `Method: ${authMethod}\n` +
+            `Method: Manual Bearer token\n` +
             `Token Type: ${authToken.token_type}\n` +
             `User ID: ${authToken.user_id}\n` +
             `Expires: ${expiresDate}\n\n` +
@@ -256,29 +237,10 @@ async function main(): Promise<void> {
   // Try to load stored token
   let token = await loadToken();
 
-  // If no token or token is expired, try to login with credentials
   if (!token) {
-    console.error('[Init] No valid stored token found');
-
-    const username = process.env.PELOTON_USERNAME;
-    const password = process.env.PELOTON_PASSWORD;
-
-    if (username && password) {
-      try {
-        console.error('[Init] Attempting automatic login...');
-        token = await loginWithPassword(username, password);
-        await saveToken(token);
-        console.error('[Init] Token obtained and stored successfully');
-      } catch (error: unknown) {
-        console.error('[Init] Auto-login failed:', isError(error) ? error.message : 'Unknown error');
-      }
-    }
-
-    if (!token) {
-      console.error('[Init] No valid auth credential available');
-      console.error('[Init] Server will start in degraded mode — use peloton_refresh_token tool to provide a Bearer token');
-      authFailureReason = 'No auth credential available. Use the peloton_refresh_token tool with a Bearer token from your browser (DevTools > Network tab > Authorization header).';
-    }
+    console.error('[Init] No valid auth credential available');
+    console.error('[Init] Server will start in degraded mode — use peloton_refresh_token tool to provide a Bearer token');
+    authFailureReason = 'No valid auth credential available. Use the peloton_refresh_token tool with a Bearer token from your browser (DevTools > Network tab > Authorization header).';
   }
 
   if (token) {
@@ -288,35 +250,8 @@ async function main(): Promise<void> {
       const connectionTest = await pelotonClient.testConnection();
       if (!connectionTest.success) {
         console.error(`[Init] Connection test failed: ${connectionTest.details}`);
-
-        const username = process.env.PELOTON_USERNAME;
-        const password = process.env.PELOTON_PASSWORD;
-
-        if (username && password) {
-          console.error('[Init] Attempting login due to connection failure...');
-          try {
-            token = await loginWithPassword(username, password);
-            await saveToken(token);
-            pelotonClient = new PelotonClient(token.access_token);
-
-            const retryTest = await pelotonClient.testConnection();
-            if (!retryTest.success) {
-              console.error('[Init] Connection still failed after refresh');
-              authFailureReason = retryTest.details;
-              pelotonClient = null;
-            } else {
-              console.error('[Init] Connection successful after refresh');
-            }
-          } catch (refreshError: unknown) {
-            const msg = isError(refreshError) ? refreshError.message : 'Unknown error';
-            console.error('[Init] Login failed:', msg);
-            authFailureReason = `Token is invalid and auto-login failed: ${msg}`;
-            pelotonClient = null;
-          }
-        } else {
-          authFailureReason = `Token is invalid and no credentials available for auto-login. Please use the peloton_refresh_token tool.`;
-          pelotonClient = null;
-        }
+        authFailureReason = `${connectionTest.details} Refresh the token with peloton_refresh_token.`;
+        pelotonClient = null;
       } else {
         console.error(`[Init] ${connectionTest.details}`);
       }
