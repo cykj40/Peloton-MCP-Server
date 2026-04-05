@@ -10,9 +10,7 @@ import { isError } from './types/errors.js';
 
 type Env = { Bindings: HttpBindings };
 
-export function createHttpApp(
-  _mcpServer: Server
-): Hono<Env> {
+export function createHttpApp(): Hono<Env> {
   const app = new Hono<Env>();
 
   const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
@@ -169,32 +167,29 @@ export function createHttpApp(
   return app;
 }
 
-export async function startHttpServer(mcpServer: Server): Promise<void> {
+export async function startHttpServer(createMcpServer: () => Server): Promise<void> {
   const PORT = Number(process.env.PORT ?? 8080);
-
-  // Stateless mode: omit sessionIdGenerator so each request is independent
-  const httpTransport = new StreamableHTTPServerTransport({});
-
-  // Cast needed: SDK's exactOptionalPropertyTypes on onclose differs from Transport interface
-  await mcpServer.connect(httpTransport as unknown as Transport);
-
-  const app = createHttpApp(mcpServer);
   const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
 
-  // Get a plain Node.js request listener from the Hono app for non-MCP routes
+  const app = createHttpApp();
   const honoListener = getRequestListener(app.fetch);
 
   const server = http.createServer(async (req, res) => {
     const urlPath = new URL(req.url ?? '/', `http://localhost`).pathname;
 
-    // /mcp must be handled by the transport directly — Hono would cause ERR_HTTP_HEADERS_SENT
-    // because the transport writes to the raw Node.js res and Hono would try to write again.
+    // /mcp: create a fresh transport + server per request (SDK v1.27+ stateless requirement)
     if (urlPath === '/mcp') {
       if (mcpAuthToken && req.headers['authorization'] !== `Bearer ${mcpAuthToken}`) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized' }));
         return;
       }
+
+      // New transport + server per request — stateless mode requires this
+      const transport = new StreamableHTTPServerTransport({});
+      const mcpServer = createMcpServer();
+      // Cast needed: SDK's exactOptionalPropertyTypes on onclose differs from Transport interface
+      await mcpServer.connect(transport as unknown as Transport);
 
       if (req.method === 'POST') {
         const chunks: Buffer[] = [];
@@ -203,7 +198,7 @@ export async function startHttpServer(mcpServer: Server): Promise<void> {
           void (async () => {
             try {
               const body = JSON.parse(Buffer.concat(chunks).toString()) as unknown;
-              await httpTransport.handleRequest(req, res, body);
+              await transport.handleRequest(req, res, body);
             } catch {
               if (!res.headersSent) {
                 res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -214,7 +209,7 @@ export async function startHttpServer(mcpServer: Server): Promise<void> {
         });
       } else {
         // GET (SSE notifications) or DELETE (session termination)
-        await httpTransport.handleRequest(req, res);
+        await transport.handleRequest(req, res);
       }
       return;
     }

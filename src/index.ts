@@ -120,23 +120,17 @@ function isToolName(name: string): name is ToolName {
   return name in toolHandlers;
 }
 
-const server = new Server(
-  {
-    name: 'peloton-mcp-server',
-    version: '1.0.0',
-  },
-  {
-    capabilities: {
-      tools: {},
-    },
-  }
-);
+function createMcpServer(): Server {
+  const srv = new Server(
+    { name: 'peloton-mcp-server', version: '1.0.0' },
+    { capabilities: { tools: {} } }
+  );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools: allTools };
-});
+  srv.setRequestHandler(ListToolsRequestSchema, async () => {
+    return { tools: allTools };
+  });
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  srv.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
   if (name === 'peloton_refresh_token') {
@@ -245,7 +239,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       ],
     };
   }
-});
+  });
+
+  return srv;
+}
 
 async function main(): Promise<void> {
   console.error('[Init] Peloton MCP Server starting...');
@@ -340,10 +337,10 @@ async function main(): Promise<void> {
 
   try {
     if (process.env.PORT || process.env.HTTP_MODE) {
-      await startHttpServer(server);
+      await startHttpServer(createMcpServer);
     } else {
       const transport = new StdioServerTransport();
-      await server.connect(transport);
+      await createMcpServer().connect(transport);
       console.error('[Server] Peloton MCP server running on stdio');
     }
   } catch (error: unknown) {
