@@ -55,7 +55,8 @@ export function createHttpApp(
   // OAuth 2.0 discovery — required by claude.ai remote MCP connectors
   app.get('/.well-known/oauth-authorization-server', (c) => {
     const url = new URL(c.req.url);
-    const base = `${url.protocol}//${url.host}`;
+    const proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
+    const base = `${proto}://${url.host}`;
     return c.json({
       issuer: base,
       authorization_endpoint: `${base}/authorize`,
