@@ -26,7 +26,7 @@
   "author": "Cyrus Jalili Khiabani",
   "license": "MIT",
   "dependencies": {
-    "@hono/node-server": "^1.19.12",
+    "@hono/node-server": "^1.19.13",
     "@libsql/client": "^0.17.2",
     "@modelcontextprotocol/sdk": "^1.0.4",
     "axios": "^1.7.2",
