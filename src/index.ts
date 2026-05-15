@@ -135,49 +135,50 @@ function createMcpServer(): Server {
     const manualToken = parsed?.token;
 
     try {
-      let authToken: PelotonAuthToken;
-
-      if (manualToken && typeof manualToken === 'string' && manualToken.trim().length > 0) {
-        const credential = manualToken.trim();
-        const testClient = new PelotonClient(credential);
-        const result = await testClient.testConnection();
-        if (!result.success) {
-          return {
-            content: [{ type: 'text', text: `Bearer token is invalid: ${result.details}\n\nMake sure you copied the full Bearer token (starts with eyJ...) from the Authorization header in DevTools > Network tab.` }],
-          };
-        }
-
-        pelotonClient = testClient;
-        authFailureReason = null;
-
-        const existingToken = await loadToken();
-        const jwtExp = parseJwtExpiry(credential);
-        const jwtUserId = parseJwtUserId(credential);
-        authToken = {
-          access_token: credential,
-          ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
-          token_type: 'Bearer',
-          expires_at: jwtExp ?? Date.now() + (25 * 24 * 60 * 60 * 1000),
-          user_id: result.userId ?? jwtUserId,
-        };
-        await saveToken(authToken);
-      } else {
+      if (!manualToken || typeof manualToken !== 'string' || manualToken.trim().length === 0) {
         return {
           content: [{ type: 'text', text: 'Error: token is required. Copy the Authorization Bearer token from members.onepeloton.com and pass it to peloton_refresh_token.' }],
         };
       }
 
-      const expiresDate = new Date(authToken.expires_at).toLocaleString();
+      const credential = manualToken.trim();
+      if (!credential.startsWith('eyJ')) {
+        return {
+          content: [{ type: 'text', text: 'Invalid token: must be a JWT starting with "eyJ". Copy the full Bearer token from the Authorization header in DevTools > Network tab.' }],
+        };
+      }
 
+      const jwtExp = parseJwtExpiry(credential);
+      if (jwtExp !== null && jwtExp <= Date.now()) {
+        return {
+          content: [{ type: 'text', text: `Token is already expired (exp: ${new Date(jwtExp).toISOString()}). Grab a fresh Bearer token from members.onepeloton.com.` }],
+        };
+      }
+
+      const jwtUserId = parseJwtUserId(credential);
+      const existingToken = await loadToken();
+      const authToken: PelotonAuthToken = {
+        access_token: credential,
+        ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
+        token_type: 'Bearer',
+        expires_at: jwtExp ?? Date.now() + (25 * 24 * 60 * 60 * 1000),
+        user_id: jwtUserId,
+      };
+      await saveToken(authToken);
+
+      pelotonClient = new PelotonClient(credential);
+      authFailureReason = null;
+
+      const expiresDate = new Date(authToken.expires_at).toLocaleString();
       return {
         content: [{
           type: 'text',
           text: `Authentication refreshed successfully!\n\n` +
-            `Method: Manual Bearer token\n` +
+            `Method: Manual Bearer token (validated locally)\n` +
             `Token Type: ${authToken.token_type}\n` +
             `User ID: ${authToken.user_id}\n` +
             `Expires: ${expiresDate}\n\n` +
-            `All Peloton tools are now available.`
+            `All Peloton tools are now available. Auth errors will surface on the first real API call if Peloton rejects the token.`
         }],
       };
     } catch (error: unknown) {
@@ -254,24 +255,14 @@ async function setupPelotonAuth(): Promise<void> {
 
   try {
     pelotonClient = new PelotonClient(token.access_token);
-    const connectionTest = await pelotonClient.testConnection();
-    if (!connectionTest.success) {
-      console.error(`[Init] Connection test failed: ${connectionTest.details}`);
-      authFailureReason = `${connectionTest.details} Refresh the token with peloton_refresh_token.`;
-      pelotonClient = null;
-    } else {
-      console.error(`[Init] ${connectionTest.details}`);
-    }
+    console.error(`[Init] PelotonClient created for user ${token.user_id} (expires ${new Date(token.expires_at).toISOString()})`);
+    console.error(`[Init] Skipping live testConnection() — auth errors will surface on the first real API call`);
+    console.error(`[Init] Registered ${allTools.length} tools (all active)`);
   } catch (error: unknown) {
     console.error('[Init] Failed to create client:', isError(error) ? error.message : 'Unknown error');
     authFailureReason = isError(error) ? error.message : 'Unknown error';
     pelotonClient = null;
-  }
-
-  if (pelotonClient) {
-    console.error(`[Init] Registered ${allTools.length} tools (all active)`);
-  } else {
-    console.error(`[Init] Auth failed — running in degraded mode. Use peloton_refresh_token tool to provide a valid Bearer token.`);
+    console.error(`[Init] Running in degraded mode. Use peloton_refresh_token tool to provide a valid Bearer token.`);
     console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_token active, others will return auth error)`);
   }
 }

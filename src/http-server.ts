@@ -60,7 +60,7 @@ export function createHttpApp(): Hono<Env> {
     let expiresAt: number;
     let userId: string = 'unknown';
     try {
-      const payload: unknown = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64').toString());
+      const payload: unknown = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString());
       if (typeof payload === 'object' && payload !== null) {
         const p = payload as Record<string, unknown>;
         expiresAt = typeof p['exp'] === 'number'
