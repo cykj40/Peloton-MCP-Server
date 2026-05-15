@@ -8,12 +8,18 @@ import { setupTestDb, teardownTestDb } from './testDb.js';
 describe('PelotonClient', () => {
   let originalEnvBearerToken: string | undefined;
   let originalEnvSessionCookie: string | undefined;
+  let originalEnvUsername: string | undefined;
+  let originalEnvPassword: string | undefined;
 
   beforeEach(async () => {
     originalEnvBearerToken = process.env.PELOTON_BEARER_TOKEN;
     originalEnvSessionCookie = process.env.PELOTON_SESSION_COOKIE;
+    originalEnvUsername = process.env.PELOTON_USERNAME;
+    originalEnvPassword = process.env.PELOTON_PASSWORD;
     delete process.env.PELOTON_BEARER_TOKEN;
     delete process.env.PELOTON_SESSION_COOKIE;
+    delete process.env.PELOTON_USERNAME;
+    delete process.env.PELOTON_PASSWORD;
     await setupTestDb();
     PelotonClient.clearCache();
     nock.cleanAll();
@@ -29,6 +35,16 @@ describe('PelotonClient', () => {
       process.env.PELOTON_SESSION_COOKIE = originalEnvSessionCookie;
     } else {
       delete process.env.PELOTON_SESSION_COOKIE;
+    }
+    if (originalEnvUsername !== undefined) {
+      process.env.PELOTON_USERNAME = originalEnvUsername;
+    } else {
+      delete process.env.PELOTON_USERNAME;
+    }
+    if (originalEnvPassword !== undefined) {
+      process.env.PELOTON_PASSWORD = originalEnvPassword;
+    } else {
+      delete process.env.PELOTON_PASSWORD;
     }
     nock.cleanAll();
     await teardownTestDb();
@@ -299,5 +315,40 @@ describe('PelotonClient', () => {
 
     const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
     await expect(client.getRecentWorkouts(10)).rejects.toThrow('Could not get user ID');
+  });
+
+  it('auto-retries on 401 when PELOTON_USERNAME and PELOTON_PASSWORD are set', async () => {
+    process.env.PELOTON_USERNAME = 'user@example.com';
+    process.env.PELOTON_PASSWORD = 'secret';
+
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .reply(401, { message: 'unauthorized' });
+
+    nock(PELOTON_API_URL)
+      .post('/auth/login', { username_or_email: 'user@example.com', password: 'secret' })
+      .reply(200, { user_id: 'user123' }, { Authorization: 'Bearer eyJhbGciOiJSUzI1NiJ9.new.token' });
+
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .reply(200, { username: 'testuser', id: 'user123' });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const result = await client.testConnection();
+
+    expect(result.success).toBe(true);
+    expect(result.userId).toBe('user123');
+  });
+
+  it('does not retry on 401 when credentials are not set', async () => {
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .reply(401, { message: 'unauthorized' });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const result = await client.testConnection();
+
+    expect(result.success).toBe(false);
+    expect(result.details).toContain('401');
   });
 });

@@ -15,6 +15,7 @@ import {
   PelotonWorkoutsListResponseSchema,
 } from '../schemas/api.js';
 import { loadToken, saveToken, isTokenExpired, PelotonAuthToken } from './tokenStore.js';
+import { loginWithPassword } from './pelotonAuth.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
@@ -86,7 +87,8 @@ async function makeApiRequest<T>(
   config: AxiosRequestConfig,
   retries = 0,
   cacheKey?: string,
-  cacheTTL = DEFAULT_CACHE_TTL
+  cacheTTL = DEFAULT_CACHE_TTL,
+  retriedOnAuth = false
 ): Promise<T> {
   const endpoint = getEndpoint(config);
 
@@ -140,6 +142,28 @@ async function makeApiRequest<T>(
       }
 
       throw new PelotonRateLimitError(endpoint, retryAfterMs);
+    }
+
+    if (status === 401) {
+      const username = process.env.PELOTON_USERNAME;
+      const password = process.env.PELOTON_PASSWORD;
+      if (username && password && !retriedOnAuth) {
+        try {
+          console.error('[API] 401 — auto re-login...');
+          const newToken = await loginWithPassword(username, password);
+          await saveToken(newToken);
+          const retryConfig = {
+            ...config,
+            headers: {
+              ...config.headers,
+              Authorization: `Bearer ${newToken.access_token}`,
+            },
+          };
+          return makeApiRequest<T>(retryConfig, retries, cacheKey, cacheTTL, true);
+        } catch (authError: unknown) {
+          console.error('[API] Auto re-login failed:', isError(authError) ? authError.message : 'Unknown error');
+        }
+      }
     }
 
     if (axiosError?.response) {

@@ -28,7 +28,8 @@ import {
   handleCorrelationTool,
   CorrelationToolName,
 } from './tools/correlations.js';
-import { loadToken, saveToken, PelotonAuthToken } from './services/tokenStore.js';
+import { loadToken, saveToken, parseJwtExpiry, parseJwtUserId, PelotonAuthToken } from './services/tokenStore.js';
+import { loginWithPassword } from './services/pelotonAuth.js';
 import { runMigrations } from './db/migrations.js';
 import {
   ConnectionTestSchema,
@@ -150,13 +151,14 @@ function createMcpServer(): Server {
         authFailureReason = null;
 
         const existingToken = await loadToken();
-        // Create token structure for display
+        const jwtExp = parseJwtExpiry(credential);
+        const jwtUserId = parseJwtUserId(credential);
         authToken = {
           access_token: credential,
           ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
           token_type: 'Bearer',
-          expires_at: Date.now() + (25 * 24 * 60 * 60 * 1000),
-          user_id: result.userId ?? 'unknown',
+          expires_at: jwtExp ?? Date.now() + (25 * 24 * 60 * 60 * 1000),
+          user_id: result.userId ?? jwtUserId,
         };
         await saveToken(authToken);
       } else {
@@ -236,6 +238,21 @@ async function main(): Promise<void> {
 
   // Try to load stored token
   let token = await loadToken();
+
+  if (!token) {
+    const username = process.env.PELOTON_USERNAME;
+    const password = process.env.PELOTON_PASSWORD;
+    if (username && password) {
+      try {
+        console.error(`[Init] Auto-login with ${username}...`);
+        token = await loginWithPassword(username, password);
+        await saveToken(token);
+        console.error(`[Init] Auto-login successful for user: ${username}`);
+      } catch (error: unknown) {
+        console.error('[Init] Auto-login failed:', isError(error) ? error.message : 'Unknown error');
+      }
+    }
+  }
 
   if (!token) {
     console.error('[Init] No valid auth credential available');

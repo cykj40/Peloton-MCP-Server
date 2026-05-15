@@ -29,7 +29,7 @@ export function setRuntimeToken(token: PelotonAuthToken): void {
   );
 }
 
-function parseJwtExpiry(token: string): number | null {
+export function parseJwtExpiry(token: string): number | null {
   try {
     const parts = token.split('.');
     if (parts.length !== 3 || !parts[1]) return null;
@@ -42,7 +42,7 @@ function parseJwtExpiry(token: string): number | null {
   }
 }
 
-function parseJwtUserId(token: string): string {
+export function parseJwtUserId(token: string): string {
   try {
     const parts = token.split('.');
     if (parts.length !== 3 || !parts[1]) return 'unknown';
