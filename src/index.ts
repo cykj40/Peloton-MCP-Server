@@ -226,17 +226,7 @@ function createMcpServer(): Server {
   return srv;
 }
 
-async function main(): Promise<void> {
-  console.error('[Init] Peloton MCP Server starting...');
-
-  try {
-    await runMigrations();
-  } catch (error: unknown) {
-    console.error('[Init] Failed to run database migrations:', isError(error) ? error.message : error);
-    console.error('[Init] Continuing without database features...');
-  }
-
-  // Try to load stored token
+async function setupPelotonAuth(): Promise<void> {
   let token = await loadToken();
 
   if (!token) {
@@ -256,42 +246,58 @@ async function main(): Promise<void> {
 
   if (!token) {
     console.error('[Init] No valid auth credential available');
-    console.error('[Init] Server will start in degraded mode — use peloton_refresh_token tool to provide a Bearer token');
+    console.error('[Init] Running in degraded mode — use peloton_refresh_token tool to provide a Bearer token');
     authFailureReason = 'No valid auth credential available. Use the peloton_refresh_token tool with a Bearer token from your browser (DevTools > Network tab > Authorization header).';
+    console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_token active, others will return auth error)`);
+    return;
   }
 
-  if (token) {
-    try {
-      pelotonClient = new PelotonClient(token.access_token);
-
-      const connectionTest = await pelotonClient.testConnection();
-      if (!connectionTest.success) {
-        console.error(`[Init] Connection test failed: ${connectionTest.details}`);
-        authFailureReason = `${connectionTest.details} Refresh the token with peloton_refresh_token.`;
-        pelotonClient = null;
-      } else {
-        console.error(`[Init] ${connectionTest.details}`);
-      }
-    } catch (error: unknown) {
-      console.error('[Init] Failed to create client:', isError(error) ? error.message : 'Unknown error');
-      authFailureReason = isError(error) ? error.message : 'Unknown error';
+  try {
+    pelotonClient = new PelotonClient(token.access_token);
+    const connectionTest = await pelotonClient.testConnection();
+    if (!connectionTest.success) {
+      console.error(`[Init] Connection test failed: ${connectionTest.details}`);
+      authFailureReason = `${connectionTest.details} Refresh the token with peloton_refresh_token.`;
       pelotonClient = null;
+    } else {
+      console.error(`[Init] ${connectionTest.details}`);
     }
+  } catch (error: unknown) {
+    console.error('[Init] Failed to create client:', isError(error) ? error.message : 'Unknown error');
+    authFailureReason = isError(error) ? error.message : 'Unknown error';
+    pelotonClient = null;
   }
 
   if (pelotonClient) {
     console.error(`[Init] Registered ${allTools.length} tools (all active)`);
   } else {
-    console.error(`[Init] Starting in degraded mode — auth failed. Use peloton_refresh_token tool to provide a valid Bearer token.`);
+    console.error(`[Init] Auth failed — running in degraded mode. Use peloton_refresh_token tool to provide a valid Bearer token.`);
     console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_token active, others will return auth error)`);
   }
+}
 
+async function main(): Promise<void> {
+  console.error('[Init] Peloton MCP Server starting...');
+
+  try {
+    await runMigrations();
+  } catch (error: unknown) {
+    console.error('[Init] Failed to run database migrations:', isError(error) ? error.message : error);
+    console.error('[Init] Continuing without database features...');
+  }
+
+  // Bind port 8080 immediately so Fly.io health checks pass before auth completes
   try {
     await startHttpServer(createMcpServer);
   } catch (error: unknown) {
     console.error(`[Init] Failed to start: ${isError(error) ? error.message : 'Unknown error'}`);
     process.exit(1);
   }
+
+  // Auth setup runs after server is listening — updates pelotonClient in the background
+  setupPelotonAuth().catch((error: unknown) => {
+    console.error('[Init] Auth setup error:', isError(error) ? error.message : 'Unknown error');
+  });
 }
 
 main().catch((error: unknown) => {
