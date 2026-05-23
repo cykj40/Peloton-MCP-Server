@@ -39,6 +39,11 @@ export const workoutTools = [
           default: 'markdown',
           description: 'Response format (markdown or json)',
         },
+        json_response: {
+          type: 'boolean',
+          default: false,
+          description: 'Return a flat JSON array of workout objects instead of Markdown',
+        },
       },
       required: [],
     },
@@ -81,6 +86,21 @@ export async function handleWorkoutTool(
     }
 
     const workouts = await client.searchWorkouts(searchParams);
+
+    if (params.json_response) {
+      const jsonWorkouts = workouts.map((workout: PelotonWorkout) => ({
+        id: workout.id,
+        title: workout.ride?.title ?? workout.name ?? 'Untitled',
+        fitness_discipline: workout.fitness_discipline,
+        start_time: workout.created_at,
+        duration_seconds: workout.duration,
+        output_watts: workout.total_work ?? null,
+      }));
+      return {
+        content: [{ type: 'text', text: JSON.stringify(jsonWorkouts) }],
+      };
+    }
+
     const formattedWorkouts = workouts.map((workout: PelotonWorkout) => ({
       id: workout.id,
       name: workout.name || workout.ride?.title || 'Untitled',

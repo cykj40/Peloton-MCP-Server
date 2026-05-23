@@ -62,6 +62,11 @@ export const correlationTools = [
           default: 'markdown',
           description: 'Response format',
         },
+        json_response: {
+          type: 'boolean',
+          default: false,
+          description: 'Return a JSON object keyed by discipline instead of Markdown',
+        },
       },
       required: [],
     },
@@ -196,6 +201,20 @@ export async function handleCorrelationTool(
                 text: 'No correlation data available yet. Use peloton_analyze_glucose_correlation to create correlations first.',
               },
             ],
+          };
+        }
+
+        if (params.json_response) {
+          const byDiscipline: Record<string, { avg_glucose_drop: number; risk_level: 'low' | 'moderate' | 'high'; session_count: number }> = {};
+          for (const insight of insights) {
+            byDiscipline[insight.discipline] = {
+              avg_glucose_drop: insight.avg_drop,
+              risk_level: insight.risk_level,
+              session_count: insight.sample_count,
+            };
+          }
+          return {
+            content: [{ type: 'text', text: JSON.stringify(byDiscipline) }],
           };
         }
 

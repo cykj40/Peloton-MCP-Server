@@ -29,7 +29,9 @@ export const WorkoutSearchSchema = z.object({
     .describe("End date (YYYY-MM-DD)"),
 
   response_format: z.enum(['markdown', 'json'])
-    .default('markdown')
+    .default('markdown'),
+
+  json_response: z.boolean().optional().default(false),
 }).strict();
 
 export const MuscleAnalysisSchema = z.object({
@@ -78,6 +80,7 @@ export const GlucoseCorrelationAnalysisSchema = z.object({
 
 export const CorrelationResponseSchema = z.object({
   response_format: z.enum(['markdown', 'json']).default('markdown'),
+  json_response: z.boolean().optional().default(false),
 }).strict();
 
 export const SyncWorkoutsSchema = z.object({
