@@ -14,7 +14,15 @@ import {
   PelotonWorkoutResponseSchema,
   PelotonWorkoutsListResponseSchema,
 } from '../schemas/api.js';
-import { loadToken, saveToken, isTokenExpired, PelotonAuthToken } from './tokenStore.js';
+import {
+  loadToken,
+  loadTokenIncludingExpired,
+  saveToken,
+  isTokenExpired,
+  isTokenExpiring,
+  PROACTIVE_EXPIRY_BUFFER_MS,
+  PelotonAuthToken,
+} from './tokenStore.js';
 import { loginWithPassword } from './pelotonAuth.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
@@ -52,6 +60,11 @@ function parseRetryAfterMs(retryAfter: string | null | undefined): number {
 function getRetryAfterHeaderValue(axiosError: AxiosError): string | undefined {
   const retryAfter = axiosError.response?.headers?.['retry-after'];
   return typeof retryAfter === 'string' ? retryAfter : undefined;
+}
+
+function isReadRequest(config: AxiosRequestConfig): boolean {
+  const method = config.method?.toUpperCase() ?? 'GET';
+  return method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
 }
 
 function mapWorkout(rawWorkout: PelotonWorkoutResponse): PelotonWorkout {
@@ -144,7 +157,7 @@ async function makeApiRequest<T>(
       throw new PelotonRateLimitError(endpoint, retryAfterMs);
     }
 
-    if (status === 401) {
+    if (status === 401 && isReadRequest(config)) {
       const username = process.env.PELOTON_USERNAME;
       const password = process.env.PELOTON_PASSWORD;
       if (username && password && !retriedOnAuth) {
@@ -237,22 +250,83 @@ export class PelotonClient {
     };
   }
 
+  private async autoLogin(reason: string): Promise<PelotonAuthToken | null> {
+    const username = process.env.PELOTON_USERNAME;
+    const password = process.env.PELOTON_PASSWORD;
+
+    if (!username || !password) {
+      return null;
+    }
+
+    try {
+      console.error(`[Auth] Auto-login (${reason})...`);
+      const token = await loginWithPassword(username, password);
+      await saveToken(token);
+      this.cachedToken = token;
+      this.bearerToken = token.access_token;
+      return token;
+    } catch (error: unknown) {
+      console.error('[Auth] Auto-login failed:', isError(error) ? error.message : 'Unknown error');
+      return null;
+    }
+  }
+
   private async getActiveToken(): Promise<PelotonAuthToken> {
-    const storedToken = this.cachedToken || await loadToken();
+    let expiredTokenAutoLoginFailed = false;
+    const storedToken = this.cachedToken ?? await loadTokenIncludingExpired();
+    if (storedToken && isTokenExpiring(storedToken, PROACTIVE_EXPIRY_BUFFER_MS)) {
+      const refreshedToken = await this.autoLogin('cached token expired or nearing expiry');
+      if (refreshedToken) {
+        return refreshedToken;
+      }
+
+      if (isTokenExpired(storedToken)) {
+        expiredTokenAutoLoginFailed = true;
+      }
+    }
+
     if (storedToken && !isTokenExpired(storedToken)) {
       this.cachedToken = storedToken;
       return storedToken;
     }
 
+    const validFallbackToken = await loadToken();
+    if (validFallbackToken) {
+      this.cachedToken = validFallbackToken;
+      return validFallbackToken;
+    }
+
     const constructorToken = this.buildTokenFromConstructor();
+    if (constructorToken && isTokenExpiring(constructorToken, PROACTIVE_EXPIRY_BUFFER_MS)) {
+      const refreshedToken = await this.autoLogin('constructor token expired or nearing expiry');
+      if (refreshedToken) {
+        return refreshedToken;
+      }
+
+      if (isTokenExpired(constructorToken)) {
+        expiredTokenAutoLoginFailed = true;
+      }
+    }
+
     if (constructorToken && !isTokenExpired(constructorToken)) {
       this.cachedToken = constructorToken;
       await saveToken(constructorToken);
       return constructorToken;
     }
 
+    const loggedInToken = await this.autoLogin('no valid cached token');
+    if (loggedInToken) {
+      return loggedInToken;
+    }
+
+    if (expiredTokenAutoLoginFailed) {
+      throw new PelotonAuthError(
+        'Peloton token is expired and auto-login failed. Check PELOTON_USERNAME and PELOTON_PASSWORD, or use peloton_refresh_token as a manual override.'
+      );
+    }
+
     throw new PelotonAuthError(
-      'No valid Peloton Bearer token found. Use peloton_refresh_token with a fresh Authorization Bearer token from members.onepeloton.com.'
+      'No valid Peloton token found and auto-login is unavailable. Set PELOTON_USERNAME and PELOTON_PASSWORD, or use peloton_refresh_token as a manual override.'
     );
   }
 

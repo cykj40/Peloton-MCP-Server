@@ -1,9 +1,31 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import nock from 'nock';
 import { PELOTON_API_URL } from '../constants.js';
 import { getWorkoutById, getWorkoutCount, upsertWorkout } from '../db/queries.js';
 import { PelotonClient } from '../services/pelotonClient.js';
+import { saveToken, type PelotonAuthToken } from '../services/tokenStore.js';
 import { makeMockWorkout } from './fixtures.js';
 import { setupTestDb, teardownTestDb } from './testDb.js';
+
+function makeJwt(userId: string, expiresAtMs: number, suffix: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256' })).toString('base64url');
+  const payload = Buffer.from(
+    JSON.stringify({
+      exp: Math.floor(expiresAtMs / 1000),
+      'http://onepeloton.com/user_id': userId,
+    })
+  ).toString('base64url');
+  return `${header}.${payload}.${suffix}`;
+}
+
+function makeAuthToken(accessToken: string, expiresAtMs: number, userId = 'user123'): PelotonAuthToken {
+  return {
+    access_token: accessToken,
+    token_type: 'Bearer',
+    expires_at: expiresAtMs,
+    user_id: userId,
+  };
+}
 
 describe('PelotonClient', () => {
   let originalEnvBearerToken: string | undefined;
@@ -338,6 +360,100 @@ describe('PelotonClient', () => {
 
     expect(result.success).toBe(true);
     expect(result.userId).toBe('user123');
+  });
+
+  it('re-logins before dispatch when the persisted token is expired', async () => {
+    process.env.PELOTON_USERNAME = 'user@example.com';
+    process.env.PELOTON_PASSWORD = 'secret';
+
+    const expiredToken = makeJwt('user123', Date.now() - 60_000, 'expired');
+    const freshToken = makeJwt('user123', Date.now() + 3_600_000, 'fresh');
+    await saveToken(makeAuthToken(expiredToken, Date.now() - 60_000));
+
+    const loginScope = nock(PELOTON_API_URL)
+      .post('/auth/login', { username_or_email: 'user@example.com', password: 'secret' })
+      .reply(200, { user_id: 'user123' }, { Authorization: `Bearer ${freshToken}` });
+
+    const meScope = nock(PELOTON_API_URL)
+      .get('/api/me')
+      .matchHeader('authorization', `Bearer ${freshToken}`)
+      .reply(200, { username: 'testuser', id: 'user123' });
+
+    const client = new PelotonClient(expiredToken);
+    const result = await client.testConnection();
+
+    expect(result.success).toBe(true);
+    expect(loginScope.isDone()).toBe(true);
+    expect(meScope.isDone()).toBe(true);
+  });
+
+  it('re-logins before dispatch when the persisted token is within the proactive expiry window', async () => {
+    process.env.PELOTON_USERNAME = 'user@example.com';
+    process.env.PELOTON_PASSWORD = 'secret';
+
+    const expiringToken = makeJwt('user123', Date.now() + 90_000, 'expiring');
+    const freshToken = makeJwt('user123', Date.now() + 3_600_000, 'fresh');
+    await saveToken(makeAuthToken(expiringToken, Date.now() + 90_000));
+
+    nock(PELOTON_API_URL)
+      .post('/auth/login', { username_or_email: 'user@example.com', password: 'secret' })
+      .reply(200, { user_id: 'user123' }, { Authorization: `Bearer ${freshToken}` });
+
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .matchHeader('authorization', `Bearer ${freshToken}`)
+      .reply(200, { username: 'testuser', id: 'user123' });
+
+    const client = new PelotonClient(expiringToken);
+    const result = await client.testConnection();
+
+    expect(result.success).toBe(true);
+  });
+
+  it('normal read flow does not touch manual token endpoints', async () => {
+    const validToken = makeJwt('user123', Date.now() + 3_600_000, 'valid');
+
+    const meScope = nock(PELOTON_API_URL)
+      .get('/api/me')
+      .matchHeader('authorization', `Bearer ${validToken}`)
+      .reply(200, { username: 'testuser', id: 'user123' });
+
+    const manualUpdateScope = nock('http://localhost')
+      .post('/update-peloton-token')
+      .reply(500, { error: 'manual path should not be used' });
+    const manualRefreshScope = nock('http://localhost')
+      .post('/refresh-token')
+      .reply(500, { error: 'manual path should not be used' });
+
+    const client = new PelotonClient(validToken);
+    const result = await client.testConnection();
+
+    expect(result.success).toBe(true);
+    expect(meScope.isDone()).toBe(true);
+    expect(manualUpdateScope.isDone()).toBe(false);
+    expect(manualRefreshScope.isDone()).toBe(false);
+  });
+
+  it('does not leak credentials into responses or logs when auto-login fails', async () => {
+    process.env.PELOTON_USERNAME = 'user@example.com';
+    process.env.PELOTON_PASSWORD = 'super-secret-password';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    nock(PELOTON_API_URL)
+      .get('/api/me')
+      .reply(401, { message: 'unauthorized' });
+
+    nock(PELOTON_API_URL)
+      .post('/auth/login', { username_or_email: 'user@example.com', password: 'super-secret-password' })
+      .reply(401, { message: 'Invalid credentials' });
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const result = await client.testConnection();
+    const logText = errorSpy.mock.calls.map((call) => call.join(' ')).join('\n');
+    errorSpy.mockRestore();
+
+    expect(result.details).not.toContain('super-secret-password');
+    expect(logText).not.toContain('super-secret-password');
   });
 
   it('does not retry on 401 when credentials are not set', async () => {

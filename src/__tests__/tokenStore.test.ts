@@ -10,7 +10,9 @@ import { deleteStoredAuthToken, getStoredAuthToken, upsertAuthToken } from '../d
 import {
   clearToken,
   isTokenExpired,
+  isTokenExpiring,
   loadToken,
+  loadTokenIncludingExpired,
   saveToken,
   setRuntimeToken,
   type PelotonAuthToken,
@@ -93,6 +95,19 @@ describe('tokenStore', () => {
     await expect(loadToken()).resolves.toBeNull();
   });
 
+  it('can load an expired persisted token for proactive auth repair', async () => {
+    const token: PelotonAuthToken = {
+      access_token: 'eyJ.expired.token',
+      token_type: 'Bearer',
+      expires_at: Date.now() - 60_000,
+      user_id: 'expired-user',
+    };
+    getStoredAuthTokenMock.mockResolvedValue(token);
+
+    await expect(loadToken()).resolves.toBeNull();
+    await expect(loadTokenIncludingExpired()).resolves.toEqual(token);
+  });
+
   it('saves tokens through the database layer', async () => {
     const token: PelotonAuthToken = {
       access_token: 'eyJ.saved.token',
@@ -127,6 +142,17 @@ describe('tokenStore', () => {
         access_token: 'eyJ.buffer.token',
         token_type: 'Bearer',
         expires_at: Date.now() + 30_000,
+        user_id: 'buffer-user',
+      })
+    ).toBe(true);
+  });
+
+  it('treats tokens inside the proactive two-minute buffer as expiring', () => {
+    expect(
+      isTokenExpiring({
+        access_token: 'eyJ.buffer.token',
+        token_type: 'Bearer',
+        expires_at: Date.now() + 90_000,
         user_id: 'buffer-user',
       })
     ).toBe(true);

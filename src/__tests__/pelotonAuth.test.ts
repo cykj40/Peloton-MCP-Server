@@ -93,7 +93,7 @@ describe('pelotonAuth', () => {
       expect(result?.refresh_token).toBe('refresh123');
     });
 
-    it('falls back to loginWithPassword when refresh fails and credentials provided', async () => {
+    it('prefers loginWithPassword when credentials are provided', async () => {
       const token: PelotonAuthToken = {
         access_token: 'old_token',
         refresh_token: 'refresh123',
@@ -101,10 +101,6 @@ describe('pelotonAuth', () => {
         expires_at: Date.now() - 1000,
         user_id: 'user123',
       };
-
-      nock(PELOTON_API_URL)
-        .post('/auth/token/refresh')
-        .reply(401, { error: 'refresh failed' });
 
       nock(PELOTON_API_URL)
         .post('/auth/login')

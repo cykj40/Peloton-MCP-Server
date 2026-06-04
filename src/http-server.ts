@@ -4,7 +4,14 @@ import { getRequestListener, type HttpBindings } from '@hono/node-server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { loadToken, saveToken, setRuntimeToken } from './services/tokenStore.js';
+import {
+  loadToken,
+  parseJwtExpiry,
+  parseJwtUserId,
+  saveToken,
+  setRuntimeToken,
+  type PelotonAuthToken,
+} from './services/tokenStore.js';
 
 type Env = { Bindings: HttpBindings };
 
@@ -28,13 +35,13 @@ export function createHttpApp(): Hono<Env> {
     return c.json(
       {
         success: false,
-        error: 'Automatic /auth/login refresh is disabled. Provide a fresh Authorization Bearer token via peloton_refresh_token or /update-peloton-token.',
+        error: 'No manual refresh endpoint is required. Auto-login with PELOTON_USERNAME and PELOTON_PASSWORD runs before API calls and after read auth failures. Use /update-peloton-token only as an explicit manual override.',
       },
       410
     );
   });
 
-  // Update Peloton Bearer token at runtime — no secret redeploy needed
+  // Manual override for updating a Peloton Bearer token at runtime.
   app.post('/update-peloton-token', async (c) => {
     if (!isAuthorized(c.req.header('authorization'))) {
       return c.json({ error: 'Unauthorized' }, 401);
@@ -56,27 +63,11 @@ export function createHttpApp(): Hono<Env> {
       return c.json({ error: 'Invalid token: must be a JWT (starts with eyJ)' }, 400);
     }
 
-    // Parse expiry and user_id from the JWT payload
-    let expiresAt: number;
-    let userId: string = 'unknown';
-    try {
-      const payload: unknown = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString());
-      if (typeof payload === 'object' && payload !== null) {
-        const p = payload as Record<string, unknown>;
-        expiresAt = typeof p['exp'] === 'number'
-          ? p['exp'] * 1000
-          : Date.now() + 2 * 24 * 60 * 60 * 1000;
-        const uid = p['http://onepeloton.com/user_id'] ?? p['sub'];
-        if (typeof uid === 'string') userId = uid;
-      } else {
-        expiresAt = Date.now() + 2 * 24 * 60 * 60 * 1000;
-      }
-    } catch {
-      expiresAt = Date.now() + 2 * 24 * 60 * 60 * 1000;
-    }
+    const expiresAt = parseJwtExpiry(token) ?? Date.now() + 2 * 24 * 60 * 60 * 1000;
+    const userId = parseJwtUserId(token);
 
     const existingToken = await loadToken();
-    const authToken = {
+    const authToken: PelotonAuthToken = {
       access_token: token,
       ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
       token_type: 'Bearer',

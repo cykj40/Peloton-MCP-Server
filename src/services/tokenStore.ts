@@ -21,6 +21,8 @@ const PelotonAuthTokenSchema = z.object({
 });
 
 let runtimeToken: PelotonAuthToken | null = null;
+const DEFAULT_EXPIRY_BUFFER_MS = 60 * 1000;
+export const PROACTIVE_EXPIRY_BUFFER_MS = 120 * 1000;
 
 export function setRuntimeToken(token: PelotonAuthToken): void {
   runtimeToken = token;
@@ -113,6 +115,24 @@ export async function loadToken(): Promise<PelotonAuthToken | null> {
   return null;
 }
 
+export async function loadTokenIncludingExpired(): Promise<PelotonAuthToken | null> {
+  if (runtimeToken) {
+    return assertValidToken(runtimeToken);
+  }
+
+  const dbToken = await getStoredAuthToken();
+  if (dbToken) {
+    return assertValidToken(dbToken);
+  }
+
+  const envToken = buildEnvToken();
+  if (envToken) {
+    return envToken;
+  }
+
+  return null;
+}
+
 export async function saveToken(token: PelotonAuthToken): Promise<void> {
   const parsedToken = assertValidToken(token);
 
@@ -126,9 +146,12 @@ export async function saveToken(token: PelotonAuthToken): Promise<void> {
   }
 }
 
-export function isTokenExpired(token: PelotonAuthToken): boolean {
-  const bufferMs = 60 * 1000;
+export function isTokenExpiring(token: PelotonAuthToken, bufferMs = PROACTIVE_EXPIRY_BUFFER_MS): boolean {
   return token.expires_at - Date.now() < bufferMs;
+}
+
+export function isTokenExpired(token: PelotonAuthToken): boolean {
+  return isTokenExpiring(token, DEFAULT_EXPIRY_BUFFER_MS);
 }
 
 export async function clearToken(): Promise<void> {

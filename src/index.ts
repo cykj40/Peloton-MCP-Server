@@ -50,16 +50,14 @@ let authFailureReason: string | null = null;
 const refreshTokenTool = {
   name: 'peloton_refresh_token' as const,
   description:
-    'Store a Peloton JWT Bearer token for live API calls. ' +
-    'To get a Bearer token manually: log into members.onepeloton.com, open DevTools > Network tab, ' +
-    'refresh the page, click any api.onepeloton.com request, find the Authorization header, ' +
-    'and copy the token after "Bearer ". Token must start with "eyJ".',
+    'Manual override fallback: store a Peloton JWT Bearer token for live API calls when PELOTON_USERNAME/PELOTON_PASSWORD auto-login cannot be used. ' +
+    'Auto-login is the normal recovery path. Token must start with "eyJ".',
   inputSchema: {
     type: 'object' as const,
     properties: {
       token: {
         type: 'string',
-        description: 'Required: The Bearer JWT token (starts with eyJ...) copied from members.onepeloton.com.',
+        description: 'Required: The manual override Bearer JWT token (starts with eyJ...).',
       },
     },
     required: ['token'],
@@ -137,21 +135,21 @@ function createMcpServer(): Server {
     try {
       if (!manualToken || typeof manualToken !== 'string' || manualToken.trim().length === 0) {
         return {
-          content: [{ type: 'text', text: 'Error: token is required. Copy the Authorization Bearer token from members.onepeloton.com and pass it to peloton_refresh_token.' }],
+          content: [{ type: 'text', text: 'Error: token is required for this manual override. Normal auth should use PELOTON_USERNAME and PELOTON_PASSWORD auto-login.' }],
         };
       }
 
       const credential = manualToken.trim();
       if (!credential.startsWith('eyJ')) {
         return {
-          content: [{ type: 'text', text: 'Invalid token: must be a JWT starting with "eyJ". Copy the full Bearer token from the Authorization header in DevTools > Network tab.' }],
+          content: [{ type: 'text', text: 'Invalid token: must be a JWT starting with "eyJ". This tool is only a manual override when auto-login cannot be used.' }],
         };
       }
 
       const jwtExp = parseJwtExpiry(credential);
       if (jwtExp !== null && jwtExp <= Date.now()) {
         return {
-          content: [{ type: 'text', text: `Token is already expired (exp: ${new Date(jwtExp).toISOString()}). Grab a fresh Bearer token from members.onepeloton.com.` }],
+          content: [{ type: 'text', text: `Token is already expired (exp: ${new Date(jwtExp).toISOString()}). Use PELOTON_USERNAME and PELOTON_PASSWORD auto-login, or provide a fresh manual override token.` }],
         };
       }
 
@@ -174,11 +172,11 @@ function createMcpServer(): Server {
         content: [{
           type: 'text',
           text: `Authentication refreshed successfully!\n\n` +
-            `Method: Manual Bearer token (validated locally)\n` +
+            `Method: Manual override Bearer token (validated locally)\n` +
             `Token Type: ${authToken.token_type}\n` +
             `User ID: ${authToken.user_id}\n` +
             `Expires: ${expiresDate}\n\n` +
-            `All Peloton tools are now available. Auth errors will surface on the first real API call if Peloton rejects the token.`
+            `All Peloton tools are now available. Future auth recovery will prefer PELOTON_USERNAME/PELOTON_PASSWORD auto-login when configured.`
         }],
       };
     } catch (error: unknown) {
@@ -189,11 +187,15 @@ function createMcpServer(): Server {
   }
 
   if (!pelotonClient) {
+    await setupPelotonAuth();
+  }
+
+  if (!pelotonClient) {
     return {
       content: [
         {
           type: 'text',
-          text: `Error: Peloton client not connected. ${authFailureReason ?? 'Please check your credentials.'}\n\nTo fix this, use the peloton_refresh_token tool with a fresh JWT Bearer token from your browser.`,
+          text: `Error: Peloton auto-login is not connected. ${authFailureReason ?? 'Set PELOTON_USERNAME and PELOTON_PASSWORD, then retry.'}\n\nManual token override is available through peloton_refresh_token only when auto-login cannot be used.`,
         },
       ],
     };
@@ -247,9 +249,9 @@ async function setupPelotonAuth(): Promise<void> {
 
   if (!token) {
     console.error('[Init] No valid auth credential available');
-    console.error('[Init] Running in degraded mode — use peloton_refresh_token tool to provide a Bearer token');
-    authFailureReason = 'No valid auth credential available. Use the peloton_refresh_token tool with a Bearer token from your browser (DevTools > Network tab > Authorization header).';
-    console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_token active, others will return auth error)`);
+    console.error('[Init] Running in degraded mode — set PELOTON_USERNAME and PELOTON_PASSWORD for auto-login');
+    authFailureReason = 'No valid auth credential available. Set PELOTON_USERNAME and PELOTON_PASSWORD for auto-login.';
+    console.error(`[Init] Registered ${allTools.length} tools (auto-login will be retried on tool calls; peloton_refresh_token is manual override only)`);
     return;
   }
 
@@ -262,8 +264,8 @@ async function setupPelotonAuth(): Promise<void> {
     console.error('[Init] Failed to create client:', isError(error) ? error.message : 'Unknown error');
     authFailureReason = isError(error) ? error.message : 'Unknown error';
     pelotonClient = null;
-    console.error(`[Init] Running in degraded mode. Use peloton_refresh_token tool to provide a valid Bearer token.`);
-    console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_token active, others will return auth error)`);
+    console.error(`[Init] Running in degraded mode. Auto-login will be retried on tool calls.`);
+    console.error(`[Init] Registered ${allTools.length} tools (peloton_refresh_token is manual override only)`);
   }
 }
 

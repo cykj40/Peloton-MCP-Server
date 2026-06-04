@@ -103,15 +103,23 @@ export async function loginWithPassword(
 
 /**
  * Refresh an expired token.
- * If a refresh_token is available, attempts token refresh.
- * Otherwise, falls back to re-login using stored credentials.
+ * Re-login with stored credentials first. Legacy refresh_token exchange is a
+ * fallback for deployments that explicitly still have one.
  */
 export async function refreshToken(
   token: PelotonAuthToken,
   username?: string,
   password?: string
 ): Promise<PelotonAuthToken | null> {
-  // Try refresh_token endpoint if available
+  if (username && password) {
+    try {
+      console.error('[Auth] Attempting auto-login with stored credentials...');
+      return await loginWithPassword(username, password);
+    } catch (error: unknown) {
+      console.error('[Auth] Auto-login failed:', isError(error) ? error.message : 'Unknown error');
+    }
+  }
+
   if (token.refresh_token) {
     try {
       const response = await axios.post<unknown>(
@@ -150,17 +158,6 @@ export async function refreshToken(
     }
   }
 
-  // Fallback: re-login using stored credentials
-  if (username && password) {
-    try {
-      console.error('[Auth] Attempting re-login with stored credentials...');
-      return await loginWithPassword(username, password);
-    } catch (error: unknown) {
-      console.error('[Auth] Re-login failed:', isError(error) ? error.message : 'Unknown error');
-      return null;
-    }
-  }
-
-  console.error('[Auth] Cannot refresh token: no refresh_token and no credentials available');
+  console.error('[Auth] Cannot refresh token: auto-login credentials unavailable and no refresh_token fallback');
   return null;
 }
