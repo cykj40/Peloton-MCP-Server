@@ -230,7 +230,7 @@ export async function refreshToken(
 ): Promise<PelotonAuthToken | null> {
   if (token.refresh_token) {
     try {
-      return await refreshOAuthToken(token);
+      return await refreshOAuthTokenAndPersist(token);
     } catch (error: unknown) {
       console.error('[Auth] OAuth refresh failed:', isError(error) ? error.message : 'Unknown error');
     }
@@ -239,7 +239,9 @@ export async function refreshToken(
   if (username && password) {
     try {
       console.error('[Auth] Attempting auto-login with stored credentials...');
-      return await loginWithPassword(username, password);
+      const loggedIn = await loginWithPassword(username, password);
+      await saveToken(loggedIn);
+      return loggedIn;
     } catch (error: unknown) {
       console.error('[Auth] Auto-login failed:', isError(error) ? error.message : 'Unknown error');
     }

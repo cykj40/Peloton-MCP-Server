@@ -139,6 +139,9 @@ describe('pelotonAuth', () => {
 
   describe('refreshToken', () => {
     it('prefers OAuth refresh when refresh_token is present', async () => {
+      const saveModule = await import('../services/tokenStore.js');
+      vi.spyOn(saveModule, 'saveToken').mockResolvedValue();
+
       const token: PelotonAuthToken = {
         access_token: 'old_token',
         refresh_token: 'refresh123',
@@ -163,6 +166,9 @@ describe('pelotonAuth', () => {
     });
 
     it('falls back to login when OAuth refresh fails', async () => {
+      const saveModule = await import('../services/tokenStore.js');
+      vi.spyOn(saveModule, 'saveToken').mockResolvedValue();
+
       const token: PelotonAuthToken = {
         access_token: 'old_token',
         refresh_token: 'refresh123',

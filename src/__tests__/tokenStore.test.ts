@@ -76,17 +76,22 @@ describe('tokenStore', () => {
     expect(token?.session_id).toBe('session-from-env');
   });
 
-  it('uses runtime token before database or env', async () => {
-    const token: PelotonAuthToken = {
+  it('prefers database token over runtime when Turso has a valid row', async () => {
+    const dbToken: PelotonAuthToken = {
+      access_token: 'eyJ.db.token',
+      token_type: 'Bearer',
+      expires_at: Date.now() + 180_000,
+      user_id: 'db-user',
+    };
+    getStoredAuthTokenMock.mockResolvedValue(dbToken);
+    setRuntimeToken({
       access_token: 'eyJ.runtime.token',
       token_type: 'Bearer',
       expires_at: Date.now() + 120_000,
       user_id: 'runtime-user',
-    };
-    setRuntimeToken(token);
+    });
 
-    await expect(loadToken()).resolves.toEqual(token);
-    expect(getStoredAuthTokenMock).not.toHaveBeenCalled();
+    await expect(loadToken()).resolves.toEqual(dbToken);
 
     await clearToken();
   });
@@ -108,7 +113,7 @@ describe('tokenStore', () => {
     await expect(loadTokenIncludingExpired()).resolves.toEqual(token);
   });
 
-  it('saves tokens through the database layer', async () => {
+  it('saves tokens through the database layer and syncs runtime', async () => {
     const token: PelotonAuthToken = {
       access_token: 'eyJ.saved.token',
       token_type: 'Bearer',
@@ -120,6 +125,7 @@ describe('tokenStore', () => {
     await saveToken(token);
 
     expect(upsertAuthTokenMock).toHaveBeenCalledWith(token);
+    await expect(loadTokenIncludingExpired()).resolves.toEqual(token);
   });
 
   it('clears runtime and database token state', async () => {

@@ -88,19 +88,36 @@ function parseMuscleGroupData(value: unknown): MuscleGroupData | null {
   return result;
 }
 
+function parseExpiresAtMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const asNumber = Number(value);
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      return asNumber;
+    }
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
 function parseStoredAuthToken(row: Record<string, unknown>): PelotonAuthToken | null {
   const accessToken = row['access_token'];
   const sessionId = row['session_id'];
   const refreshToken = row['refresh_token'];
   const tokenType = row['token_type'];
-  const expiresAt = row['expires_at'];
+  const expiresAt = parseExpiresAtMs(row['expires_at']);
   const userId = row['user_id'];
 
   if (
     typeof accessToken !== 'string' ||
     typeof tokenType !== 'string' ||
     typeof userId !== 'string' ||
-    typeof expiresAt !== 'number'
+    expiresAt === null
   ) {
     return null;
   }

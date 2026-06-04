@@ -168,13 +168,14 @@ async function makeApiRequest<T>(
                 const username = process.env.PELOTON_USERNAME;
                 const password = process.env.PELOTON_PASSWORD;
                 if (!username || !password) return null;
-                return refreshToken(storedToken, username, password);
+                const recovered = await refreshToken(storedToken, username, password);
+                if (recovered) {
+                  await saveToken(recovered);
+                }
+                return recovered;
               })();
 
           if (newToken) {
-            if (!storedToken.refresh_token) {
-              await saveToken(newToken);
-            }
             const retryConfig = {
               ...config,
               headers: {

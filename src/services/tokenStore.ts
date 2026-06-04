@@ -97,16 +97,16 @@ function buildEnvToken(): PelotonAuthToken | null {
 }
 
 export async function loadToken(): Promise<PelotonAuthToken | null> {
+  const dbToken = await getStoredAuthToken();
+  if (dbToken && !isTokenExpired(dbToken)) {
+    return assertValidToken(dbToken);
+  }
+
   if (runtimeToken && !isTokenExpired(runtimeToken)) {
     return runtimeToken;
   }
   if (runtimeToken && isTokenExpired(runtimeToken)) {
     runtimeToken = null;
-  }
-
-  const dbToken = await getStoredAuthToken();
-  if (dbToken && !isTokenExpired(dbToken)) {
-    return assertValidToken(dbToken);
   }
 
   const envToken = buildEnvToken();
@@ -118,13 +118,14 @@ export async function loadToken(): Promise<PelotonAuthToken | null> {
 }
 
 export async function loadTokenIncludingExpired(): Promise<PelotonAuthToken | null> {
-  if (runtimeToken) {
-    return assertValidToken(runtimeToken);
-  }
-
+  // Turso is authoritative — must load before runtime so forced expiry triggers refresh.
   const dbToken = await getStoredAuthToken();
   if (dbToken) {
     return assertValidToken(dbToken);
+  }
+
+  if (runtimeToken) {
+    return assertValidToken(runtimeToken);
   }
 
   const envToken = buildEnvToken();
@@ -140,6 +141,7 @@ export async function saveToken(token: PelotonAuthToken): Promise<void> {
 
   try {
     await upsertAuthToken(parsedToken);
+    setRuntimeToken(parsedToken);
     console.error(
       `[Token] Saved token for user ${parsedToken.user_id} (expires ${new Date(parsedToken.expires_at).toISOString()})`
     );

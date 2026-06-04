@@ -124,6 +124,14 @@ describe('PelotonClient', () => {
 
   it('getRecentWorkouts sends peloton_session_id cookie when available', async () => {
     process.env.PELOTON_SESSION_COOKIE = 'session-cookie-123';
+    const accessToken = 'eyJhbGciOiJSUzI1NiJ9.fake.token';
+    await saveToken({
+      access_token: accessToken,
+      session_id: 'session-cookie-123',
+      token_type: 'Bearer',
+      expires_at: Date.now() + 3_600_000,
+      user_id: 'user123',
+    });
 
     nock(PELOTON_API_URL)
       .get('/api/me')
@@ -136,7 +144,7 @@ describe('PelotonClient', () => {
       .matchHeader('cookie', 'peloton_session_id=session-cookie-123')
       .reply(200, { data: [] });
 
-    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const client = new PelotonClient(accessToken);
     const workouts = await client.getRecentWorkouts(10);
 
     expect(workouts).toEqual([]);
@@ -342,6 +350,9 @@ describe('PelotonClient', () => {
   it('auto-retries on 401 when PELOTON_USERNAME and PELOTON_PASSWORD are set', async () => {
     process.env.PELOTON_USERNAME = 'user@example.com';
     process.env.PELOTON_PASSWORD = 'secret';
+    const staleJwt = makeJwt('user123', Date.now() + 7 * 24 * 60 * 60 * 1000, 'stale');
+    const freshJwt = makeJwt('user123', Date.now() + 8 * 24 * 60 * 60 * 1000, 'fresh');
+    await saveToken(makeAuthToken(staleJwt, Date.now() + 7 * 24 * 60 * 60 * 1000));
 
     nock(PELOTON_API_URL)
       .get('/api/me')
@@ -349,13 +360,14 @@ describe('PelotonClient', () => {
 
     nock(PELOTON_API_URL)
       .post('/auth/login?=', { username_or_email: 'user@example.com', password: 'secret' })
-      .reply(200, { user_id: 'user123' }, { Authorization: 'Bearer eyJhbGciOiJSUzI1NiJ9.new.token' });
+      .reply(200, { user_id: 'user123' }, { Authorization: `Bearer ${freshJwt}` });
 
     nock(PELOTON_API_URL)
       .get('/api/me')
+      .matchHeader('authorization', `Bearer ${freshJwt}`)
       .reply(200, { username: 'testuser', id: 'user123' });
 
-    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const client = new PelotonClient(staleJwt);
     const result = await client.testConnection();
 
     expect(result.success).toBe(true);
@@ -412,6 +424,7 @@ describe('PelotonClient', () => {
 
   it('normal read flow does not touch manual token endpoints', async () => {
     const validToken = makeJwt('user123', Date.now() + 3_600_000, 'valid');
+    await saveToken(makeAuthToken(validToken, Date.now() + 3_600_000));
 
     const meScope = nock(PELOTON_API_URL)
       .get('/api/me')
@@ -438,16 +451,18 @@ describe('PelotonClient', () => {
     process.env.PELOTON_USERNAME = 'user@example.com';
     process.env.PELOTON_PASSWORD = 'super-secret-password';
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const expiredJwt = makeJwt('user123', Date.now() - 60_000, 'expired');
+    await saveToken(makeAuthToken(expiredJwt, Date.now() - 60_000));
+
+    const authModule = await import('../services/pelotonAuth.js');
+    const { PelotonAuthError } = await import('../types/errors.js');
+    vi.spyOn(authModule, 'loginWithPassword').mockRejectedValue(new PelotonAuthError('Auth login failed (401)'));
 
     nock(PELOTON_API_URL)
       .get('/api/me')
       .reply(401, { message: 'unauthorized' });
 
-    nock(PELOTON_API_URL)
-      .post('/auth/login?=', { username_or_email: 'user@example.com', password: 'super-secret-password' })
-      .reply(401, { message: 'Invalid credentials' });
-
-    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const client = new PelotonClient(expiredJwt);
     const result = await client.testConnection();
     const logText = errorSpy.mock.calls.map((call) => call.join(' ')).join('\n');
     errorSpy.mockRestore();
