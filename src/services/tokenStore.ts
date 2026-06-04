@@ -1,6 +1,9 @@
 import { z } from 'zod';
+import { PROACTIVE_EXPIRY_BUFFER_MS } from '../constants.js';
 import { deleteStoredAuthToken, getStoredAuthToken, upsertAuthToken } from '../db/queries.js';
 import { CookieStoreError } from '../types/errors.js';
+
+export { PROACTIVE_EXPIRY_BUFFER_MS };
 
 export interface PelotonAuthToken {
   access_token: string;
@@ -22,7 +25,6 @@ const PelotonAuthTokenSchema = z.object({
 
 let runtimeToken: PelotonAuthToken | null = null;
 const DEFAULT_EXPIRY_BUFFER_MS = 60 * 1000;
-export const PROACTIVE_EXPIRY_BUFFER_MS = 120 * 1000;
 
 export function setRuntimeToken(token: PelotonAuthToken): void {
   runtimeToken = token;

@@ -1,22 +1,32 @@
 import axios, { AxiosError } from 'axios';
-import { PELOTON_API_URL } from '../constants.js';
+import { z } from 'zod';
+import {
+  PELOTON_API_URL,
+  PELOTON_AUTH_CLIENT_ID,
+  PELOTON_AUTH_LOGIN_PATH,
+  PELOTON_AUTH_TOKEN_URL,
+  PELOTON_TOKEN_EXPIRES_IN_SECONDS,
+} from '../constants.js';
 import { isError, PelotonAuthError } from '../types/errors.js';
-import { PelotonAuthToken } from './tokenStore.js';
+import { parseJwtExpiry, parseJwtUserId, PelotonAuthToken, saveToken } from './tokenStore.js';
+
+const OAuthTokenResponseSchema = z.object({
+  access_token: z.string().min(1),
+  refresh_token: z.string().min(1).optional(),
+  token_type: z.string().optional(),
+  expires_in: z.number().positive(),
+});
+
+function resolveAuthClientId(): string {
+  const override = process.env.PELOTON_AUTH_CLIENT_ID?.trim();
+  return override && override.length > 0 ? override : PELOTON_AUTH_CLIENT_ID;
+}
 
 /**
  * Parse JWT to extract expiration time.
  */
-function parseJwtExpiry(token: string): number {
-  try {
-    const payload = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString());
-    if (typeof payload.exp === 'number') {
-      return payload.exp * 1000; // Convert to milliseconds
-    }
-  } catch {
-    // If parsing fails, use default expiry
-  }
-  // Default: 2 days from now
-  return Date.now() + (2 * 24 * 60 * 60 * 1000);
+function parseJwtExpiryFromAccessToken(token: string): number {
+  return parseJwtExpiry(token) ?? Date.now() + PELOTON_TOKEN_EXPIRES_IN_SECONDS * 1000;
 }
 
 function extractSessionId(setCookieHeader: string | string[] | undefined): string | undefined {
@@ -33,9 +43,118 @@ function extractSessionId(setCookieHeader: string | string[] | undefined): strin
   return undefined;
 }
 
+function buildTokenFromOAuthResponse(
+  parsed: z.infer<typeof OAuthTokenResponseSchema>,
+  previous: PelotonAuthToken
+): PelotonAuthToken {
+  const rotatedRefresh = parsed.refresh_token ?? previous.refresh_token;
+  if (!rotatedRefresh) {
+    throw new PelotonAuthError('OAuth refresh response missing refresh_token');
+  }
+
+  return {
+    access_token: parsed.access_token,
+    refresh_token: rotatedRefresh,
+    ...(previous.session_id ? { session_id: previous.session_id } : {}),
+    token_type: parsed.token_type ?? 'Bearer',
+    expires_at: Date.now() + parsed.expires_in * 1000,
+    user_id: parseJwtUserId(parsed.access_token) !== 'unknown'
+      ? parseJwtUserId(parsed.access_token)
+      : previous.user_id,
+  };
+}
+
+/**
+ * Bootstrap or update stored credentials from browser-extracted OAuth tokens.
+ */
+export function buildBootstrapToken(
+  accessToken: string,
+  refreshToken?: string,
+  existing?: PelotonAuthToken | null
+): PelotonAuthToken {
+  const jwtExp = parseJwtExpiry(accessToken);
+  return {
+    access_token: accessToken,
+    ...(refreshToken ? { refresh_token: refreshToken } : {}),
+    ...(existing?.session_id ? { session_id: existing.session_id } : {}),
+    token_type: 'Bearer',
+    expires_at: jwtExp ?? Date.now() + PELOTON_TOKEN_EXPIRES_IN_SECONDS * 1000,
+    user_id: parseJwtUserId(accessToken),
+  };
+}
+
+/**
+ * Exchange a refresh token at Auth0 (peloton-to-garmin flow). Refresh tokens rotate.
+ */
+export async function refreshOAuthToken(token: PelotonAuthToken): Promise<PelotonAuthToken> {
+  if (!token.refresh_token) {
+    throw new PelotonAuthError('No refresh_token available for OAuth refresh');
+  }
+
+  const clientId = resolveAuthClientId();
+
+  try {
+    const response = await axios.post<unknown>(
+      PELOTON_AUTH_TOKEN_URL,
+      new URLSearchParams({
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        refresh_token: token.refresh_token,
+      }),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+        },
+        validateStatus: () => true,
+      }
+    );
+
+    if (response.status >= 400) {
+      throw new PelotonAuthError(
+        `OAuth token refresh failed (${response.status})`,
+        new Error(typeof response.data === 'string' ? response.data : JSON.stringify(response.data))
+      );
+    }
+
+    const parsed = OAuthTokenResponseSchema.parse(response.data);
+    console.error('[Auth] Successfully refreshed access token via Auth0');
+    return buildTokenFromOAuthResponse(parsed, token);
+  } catch (error: unknown) {
+    if (error instanceof PelotonAuthError) {
+      throw error;
+    }
+
+    const axiosError = error instanceof AxiosError ? error : null;
+    if (axiosError?.response) {
+      throw new PelotonAuthError(
+        `OAuth token refresh failed (${axiosError.response.status})`,
+        error
+      );
+    }
+
+    throw new PelotonAuthError(
+      `OAuth token refresh failed: ${isError(error) ? error.message : 'Unknown error'}`,
+      error
+    );
+  }
+}
+
+/**
+ * Refresh via Auth0 and persist rotated refresh_token. Throws if persistence fails.
+ */
+export async function refreshOAuthTokenAndPersist(token: PelotonAuthToken): Promise<PelotonAuthToken> {
+  const refreshed = await refreshOAuthToken(token);
+  try {
+    await saveToken(refreshed);
+  } catch (error: unknown) {
+    throw new PelotonAuthError('Failed to persist auth tokens after OAuth refresh', error);
+  }
+  return refreshed;
+}
+
 /**
  * Login with password and return JWT Bearer token.
- * Peloton uses Auth0 and returns JWT tokens via the Authorization header.
+ * Uses Cloudflare bypass path when still accepted (see peloton-to-garmin issue #795).
  */
 export async function loginWithPassword(
   username: string,
@@ -43,12 +162,13 @@ export async function loginWithPassword(
 ): Promise<PelotonAuthToken> {
   try {
     const response = await axios.post<unknown>(
-      `${PELOTON_API_URL}/auth/login`,
+      PELOTON_AUTH_LOGIN_PATH,
       {
         username_or_email: username,
         password,
       },
       {
+        baseURL: PELOTON_API_URL,
         headers: {
           'Content-Type': 'application/json',
           Accept: 'application/json',
@@ -58,7 +178,6 @@ export async function loginWithPassword(
       }
     );
 
-    // Check if response has Authorization header with Bearer token
     const authHeader = response.headers['authorization'] as string | undefined;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       throw new PelotonAuthError(
@@ -78,7 +197,7 @@ export async function loginWithPassword(
       access_token: bearerToken,
       ...(sessionId ? { session_id: sessionId } : {}),
       token_type: 'Bearer',
-      expires_at: parseJwtExpiry(bearerToken),
+      expires_at: parseJwtExpiryFromAccessToken(bearerToken),
       user_id: userId,
     };
   } catch (error: unknown) {
@@ -102,15 +221,21 @@ export async function loginWithPassword(
 }
 
 /**
- * Refresh an expired token.
- * Re-login with stored credentials first. Legacy refresh_token exchange is a
- * fallback for deployments that explicitly still have one.
+ * Refresh an expired or expiring token: OAuth refresh first, then password login fallback.
  */
 export async function refreshToken(
   token: PelotonAuthToken,
   username?: string,
   password?: string
 ): Promise<PelotonAuthToken | null> {
+  if (token.refresh_token) {
+    try {
+      return await refreshOAuthToken(token);
+    } catch (error: unknown) {
+      console.error('[Auth] OAuth refresh failed:', isError(error) ? error.message : 'Unknown error');
+    }
+  }
+
   if (username && password) {
     try {
       console.error('[Auth] Attempting auto-login with stored credentials...');
@@ -120,44 +245,6 @@ export async function refreshToken(
     }
   }
 
-  if (token.refresh_token) {
-    try {
-      const response = await axios.post<unknown>(
-        `${PELOTON_API_URL}/auth/token/refresh`,
-        {
-          refresh_token: token.refresh_token,
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-            'peloton-platform': 'web',
-            'User-Agent': 'PelotonMCP/1.0',
-          },
-        }
-      );
-
-      // Check for Bearer token in Authorization header
-      const authHeader = response.headers['authorization'] as string | undefined;
-      if (authHeader && authHeader.startsWith('Bearer ')) {
-        const bearerToken = authHeader.substring(7);
-        const sessionId = extractSessionId(response.headers['set-cookie'] as string | string[] | undefined);
-        console.error('[Auth] Successfully refreshed token via /auth/token/refresh');
-
-        return {
-          access_token: bearerToken,
-          refresh_token: token.refresh_token,
-          ...(sessionId || token.session_id ? { session_id: sessionId ?? token.session_id } : {}),
-          token_type: 'Bearer',
-          expires_at: parseJwtExpiry(bearerToken),
-          user_id: token.user_id,
-        };
-      }
-    } catch (error: unknown) {
-      console.error('[Auth] Token refresh failed:', isError(error) ? error.message : 'Unknown error');
-    }
-  }
-
-  console.error('[Auth] Cannot refresh token: auto-login credentials unavailable and no refresh_token fallback');
+  console.error('[Auth] Cannot refresh token: no refresh_token and auto-login unavailable');
   return null;
 }

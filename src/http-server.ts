@@ -4,10 +4,9 @@ import { getRequestListener, type HttpBindings } from '@hono/node-server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
+import { buildBootstrapToken } from './services/pelotonAuth.js';
 import {
   loadToken,
-  parseJwtExpiry,
-  parseJwtUserId,
   saveToken,
   setRuntimeToken,
   type PelotonAuthToken,
@@ -58,29 +57,30 @@ export function createHttpApp(): Hono<Env> {
       return c.json({ error: 'Missing required field: token' }, 400);
     }
 
-    const token = String((body as { token: unknown }).token).trim();
-    if (!token.startsWith('eyJ')) {
+    const accessToken = String((body as { token: unknown }).token).trim();
+    if (!accessToken.startsWith('eyJ')) {
       return c.json({ error: 'Invalid token: must be a JWT (starts with eyJ)' }, 400);
     }
 
-    const expiresAt = parseJwtExpiry(token) ?? Date.now() + 2 * 24 * 60 * 60 * 1000;
-    const userId = parseJwtUserId(token);
+    const refreshTokenValue =
+      'refresh_token' in body && typeof (body as { refresh_token?: unknown }).refresh_token === 'string'
+        ? (body as { refresh_token: string }).refresh_token.trim()
+        : undefined;
 
     const existingToken = await loadToken();
-    const authToken: PelotonAuthToken = {
-      access_token: token,
-      ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
-      token_type: 'Bearer',
-      expires_at: expiresAt,
-      user_id: userId,
-    };
+    const authToken: PelotonAuthToken = buildBootstrapToken(
+      accessToken,
+      refreshTokenValue,
+      existingToken
+    );
     setRuntimeToken(authToken);
     await saveToken(authToken);
 
     return c.json({
       success: true,
-      user_id: userId,
-      expires_at: new Date(expiresAt).toISOString(),
+      user_id: authToken.user_id,
+      expires_at: new Date(authToken.expires_at).toISOString(),
+      has_refresh_token: Boolean(authToken.refresh_token),
     });
   });
 

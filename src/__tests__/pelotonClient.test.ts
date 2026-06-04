@@ -348,7 +348,7 @@ describe('PelotonClient', () => {
       .reply(401, { message: 'unauthorized' });
 
     nock(PELOTON_API_URL)
-      .post('/auth/login', { username_or_email: 'user@example.com', password: 'secret' })
+      .post('/auth/login?=', { username_or_email: 'user@example.com', password: 'secret' })
       .reply(200, { user_id: 'user123' }, { Authorization: 'Bearer eyJhbGciOiJSUzI1NiJ9.new.token' });
 
     nock(PELOTON_API_URL)
@@ -371,7 +371,7 @@ describe('PelotonClient', () => {
     await saveToken(makeAuthToken(expiredToken, Date.now() - 60_000));
 
     const loginScope = nock(PELOTON_API_URL)
-      .post('/auth/login', { username_or_email: 'user@example.com', password: 'secret' })
+      .post('/auth/login?=', { username_or_email: 'user@example.com', password: 'secret' })
       .reply(200, { user_id: 'user123' }, { Authorization: `Bearer ${freshToken}` });
 
     const meScope = nock(PELOTON_API_URL)
@@ -396,7 +396,7 @@ describe('PelotonClient', () => {
     await saveToken(makeAuthToken(expiringToken, Date.now() + 90_000));
 
     nock(PELOTON_API_URL)
-      .post('/auth/login', { username_or_email: 'user@example.com', password: 'secret' })
+      .post('/auth/login?=', { username_or_email: 'user@example.com', password: 'secret' })
       .reply(200, { user_id: 'user123' }, { Authorization: `Bearer ${freshToken}` });
 
     nock(PELOTON_API_URL)
@@ -444,7 +444,7 @@ describe('PelotonClient', () => {
       .reply(401, { message: 'unauthorized' });
 
     nock(PELOTON_API_URL)
-      .post('/auth/login', { username_or_email: 'user@example.com', password: 'super-secret-password' })
+      .post('/auth/login?=', { username_or_email: 'user@example.com', password: 'super-secret-password' })
       .reply(401, { message: 'Invalid credentials' });
 
     const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');

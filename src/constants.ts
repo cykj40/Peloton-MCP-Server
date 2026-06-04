@@ -1,5 +1,22 @@
 export const PELOTON_API_URL = 'https://api.onepeloton.com';
 
+/** Cloudflare bypass path for blocked POST /auth/login (see peloton-to-garmin issue #795). */
+export const PELOTON_AUTH_LOGIN_PATH = '/auth/login?=';
+
+/** Full login URL with Cloudflare bypass query (see peloton-to-garmin issue #795). */
+export function pelotonAuthLoginUrl(): string {
+  return new URL(PELOTON_AUTH_LOGIN_PATH, PELOTON_API_URL).href;
+}
+
+/** Auth0 settings aligned with peloton-to-garmin PelotonApiSettings defaults. */
+export const PELOTON_AUTH_DOMAIN = 'auth.onepeloton.com';
+export const PELOTON_AUTH_CLIENT_ID = 'WVoJxVDdPoFx4RNewvvg6ch2mZ7bwnsM';
+export const PELOTON_AUTH_TOKEN_URL = `https://${PELOTON_AUTH_DOMAIN}/oauth/token`;
+export const PELOTON_TOKEN_EXPIRES_IN_SECONDS = 172800;
+
+/** Refresh access tokens this long before expiry (48h TTL, ~2h buffer). */
+export const PROACTIVE_EXPIRY_BUFFER_MS = 2 * 60 * 60 * 1000;
+
 // Rate limiting
 export const MAX_RETRIES = 3;
 export const INITIAL_RETRY_DELAY = 1000;

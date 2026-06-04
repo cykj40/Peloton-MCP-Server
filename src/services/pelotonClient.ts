@@ -23,7 +23,7 @@ import {
   PROACTIVE_EXPIRY_BUFFER_MS,
   PelotonAuthToken,
 } from './tokenStore.js';
-import { loginWithPassword } from './pelotonAuth.js';
+import { loginWithPassword, refreshOAuthTokenAndPersist, refreshToken } from './pelotonAuth.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
@@ -157,25 +157,39 @@ async function makeApiRequest<T>(
       throw new PelotonRateLimitError(endpoint, retryAfterMs);
     }
 
-    if (status === 401 && isReadRequest(config)) {
-      const username = process.env.PELOTON_USERNAME;
-      const password = process.env.PELOTON_PASSWORD;
-      if (username && password && !retriedOnAuth) {
-        try {
-          console.error('[API] 401 — auto re-login...');
-          const newToken = await loginWithPassword(username, password);
-          await saveToken(newToken);
-          const retryConfig = {
-            ...config,
-            headers: {
-              ...config.headers,
-              Authorization: `Bearer ${newToken.access_token}`,
-            },
-          };
-          return makeApiRequest<T>(retryConfig, retries, cacheKey, cacheTTL, true);
-        } catch (authError: unknown) {
-          console.error('[API] Auto re-login failed:', isError(authError) ? authError.message : 'Unknown error');
+    if (status === 401 && isReadRequest(config) && !retriedOnAuth) {
+      try {
+        const storedToken = await loadTokenIncludingExpired();
+        if (storedToken) {
+          console.error('[API] 401 — attempting auth recovery...');
+          const newToken = storedToken.refresh_token
+            ? await refreshOAuthTokenAndPersist(storedToken)
+            : await (async (): Promise<PelotonAuthToken | null> => {
+                const username = process.env.PELOTON_USERNAME;
+                const password = process.env.PELOTON_PASSWORD;
+                if (!username || !password) return null;
+                return refreshToken(storedToken, username, password);
+              })();
+
+          if (newToken) {
+            if (!storedToken.refresh_token) {
+              await saveToken(newToken);
+            }
+            const retryConfig = {
+              ...config,
+              headers: {
+                ...config.headers,
+                Authorization: `Bearer ${newToken.access_token}`,
+                ...(newToken.session_id
+                  ? { Cookie: `peloton_session_id=${newToken.session_id}` }
+                  : {}),
+              },
+            };
+            return makeApiRequest<T>(retryConfig, retries, cacheKey, cacheTTL, true);
+          }
         }
+      } catch (authError: unknown) {
+        console.error('[API] Auth recovery failed:', isError(authError) ? authError.message : 'Unknown error');
       }
     }
 
@@ -271,11 +285,27 @@ export class PelotonClient {
     }
   }
 
+  private async proactiveRefresh(storedToken: PelotonAuthToken, reason: string): Promise<PelotonAuthToken | null> {
+    if (storedToken.refresh_token) {
+      try {
+        console.error(`[Auth] OAuth proactive refresh (${reason})...`);
+        const refreshed = await refreshOAuthTokenAndPersist(storedToken);
+        this.cachedToken = refreshed;
+        this.bearerToken = refreshed.access_token;
+        return refreshed;
+      } catch (error: unknown) {
+        console.error('[Auth] OAuth proactive refresh failed:', isError(error) ? error.message : 'Unknown error');
+      }
+    }
+
+    return this.autoLogin(reason);
+  }
+
   private async getActiveToken(): Promise<PelotonAuthToken> {
     let expiredTokenAutoLoginFailed = false;
     const storedToken = this.cachedToken ?? await loadTokenIncludingExpired();
     if (storedToken && isTokenExpiring(storedToken, PROACTIVE_EXPIRY_BUFFER_MS)) {
-      const refreshedToken = await this.autoLogin('cached token expired or nearing expiry');
+      const refreshedToken = await this.proactiveRefresh(storedToken, 'cached token expired or nearing expiry');
       if (refreshedToken) {
         return refreshedToken;
       }
@@ -298,7 +328,7 @@ export class PelotonClient {
 
     const constructorToken = this.buildTokenFromConstructor();
     if (constructorToken && isTokenExpiring(constructorToken, PROACTIVE_EXPIRY_BUFFER_MS)) {
-      const refreshedToken = await this.autoLogin('constructor token expired or nearing expiry');
+      const refreshedToken = await this.proactiveRefresh(constructorToken, 'constructor token expired or nearing expiry');
       if (refreshedToken) {
         return refreshedToken;
       }
@@ -314,6 +344,13 @@ export class PelotonClient {
       return constructorToken;
     }
 
+    if (storedToken?.refresh_token) {
+      const oauthRefreshed = await this.proactiveRefresh(storedToken, 'no valid cached token');
+      if (oauthRefreshed) {
+        return oauthRefreshed;
+      }
+    }
+
     const loggedInToken = await this.autoLogin('no valid cached token');
     if (loggedInToken) {
       return loggedInToken;
@@ -321,12 +358,12 @@ export class PelotonClient {
 
     if (expiredTokenAutoLoginFailed) {
       throw new PelotonAuthError(
-        'Peloton token is expired and auto-login failed. Check PELOTON_USERNAME and PELOTON_PASSWORD, or use peloton_refresh_token as a manual override.'
+        'Peloton token is expired and refresh failed. Bootstrap once with peloton_refresh_token (access + refresh token from browser), or restore PELOTON_USERNAME/PELOTON_PASSWORD if login is available.'
       );
     }
 
     throw new PelotonAuthError(
-      'No valid Peloton token found and auto-login is unavailable. Set PELOTON_USERNAME and PELOTON_PASSWORD, or use peloton_refresh_token as a manual override.'
+      'No valid Peloton token found. Bootstrap once with peloton_refresh_token (access + refresh token from browser), or set PELOTON_USERNAME and PELOTON_PASSWORD.'
     );
   }
 

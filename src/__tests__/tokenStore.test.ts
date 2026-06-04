@@ -147,12 +147,12 @@ describe('tokenStore', () => {
     ).toBe(true);
   });
 
-  it('treats tokens inside the proactive two-minute buffer as expiring', () => {
+  it('treats tokens inside the proactive two-hour buffer as expiring', () => {
     expect(
       isTokenExpiring({
         access_token: 'eyJ.buffer.token',
         token_type: 'Bearer',
-        expires_at: Date.now() + 90_000,
+        expires_at: Date.now() + 60 * 60 * 1000,
         user_id: 'buffer-user',
       })
     ).toBe(true);

@@ -28,8 +28,15 @@ import {
   handleCorrelationTool,
   CorrelationToolName,
 } from './tools/correlations.js';
-import { loadToken, saveToken, parseJwtExpiry, parseJwtUserId, PelotonAuthToken } from './services/tokenStore.js';
-import { loginWithPassword } from './services/pelotonAuth.js';
+import {
+  loadToken,
+  loadTokenIncludingExpired,
+  saveToken,
+  parseJwtExpiry,
+  isTokenExpiring,
+  PROACTIVE_EXPIRY_BUFFER_MS,
+} from './services/tokenStore.js';
+import { buildBootstrapToken, loginWithPassword, refreshOAuthTokenAndPersist } from './services/pelotonAuth.js';
 import { runMigrations } from './db/migrations.js';
 import {
   ConnectionTestSchema,
@@ -50,17 +57,21 @@ let authFailureReason: string | null = null;
 const refreshTokenTool = {
   name: 'peloton_refresh_token' as const,
   description:
-    'Manual override fallback: store a Peloton JWT Bearer token for live API calls when PELOTON_USERNAME/PELOTON_PASSWORD auto-login cannot be used. ' +
-    'Auto-login is the normal recovery path. Token must start with "eyJ".',
+    'One-time bootstrap: store Peloton OAuth access + refresh tokens extracted from the browser (Network tab on members.onepeloton.com, auth/session or oauth/token response). ' +
+    'After bootstrap, Auth0 refresh keeps tokens alive automatically. Access token must start with "eyJ".',
   inputSchema: {
     type: 'object' as const,
     properties: {
       token: {
         type: 'string',
-        description: 'Required: The manual override Bearer JWT token (starts with eyJ...).',
+        description: 'Required: access_token JWT from browser (starts with eyJ...).',
+      },
+      refresh_token: {
+        type: 'string',
+        description: 'Required for long-lived auth: refresh_token from the same OAuth response.',
       },
     },
-    required: ['token'],
+    required: ['token', 'refresh_token'],
   },
 };
 
@@ -129,39 +140,40 @@ function createMcpServer(): Server {
   const { name, arguments: args } = request.params;
 
   if (name === 'peloton_refresh_token') {
-    const parsed = args as { token?: string };
+    const parsed = args as { token?: string; refresh_token?: string };
     const manualToken = parsed?.token;
+    const manualRefresh = parsed?.refresh_token;
 
     try {
       if (!manualToken || typeof manualToken !== 'string' || manualToken.trim().length === 0) {
         return {
-          content: [{ type: 'text', text: 'Error: token is required for this manual override. Normal auth should use PELOTON_USERNAME and PELOTON_PASSWORD auto-login.' }],
+          content: [{ type: 'text', text: 'Error: token (access_token JWT) is required for OAuth bootstrap.' }],
+        };
+      }
+
+      if (!manualRefresh || typeof manualRefresh !== 'string' || manualRefresh.trim().length === 0) {
+        return {
+          content: [{ type: 'text', text: 'Error: refresh_token is required for OAuth bootstrap (extract both from browser Network tab).' }],
         };
       }
 
       const credential = manualToken.trim();
+      const refreshCredential = manualRefresh.trim();
       if (!credential.startsWith('eyJ')) {
         return {
-          content: [{ type: 'text', text: 'Invalid token: must be a JWT starting with "eyJ". This tool is only a manual override when auto-login cannot be used.' }],
+          content: [{ type: 'text', text: 'Invalid token: access token must be a JWT starting with "eyJ".' }],
         };
       }
 
       const jwtExp = parseJwtExpiry(credential);
       if (jwtExp !== null && jwtExp <= Date.now()) {
         return {
-          content: [{ type: 'text', text: `Token is already expired (exp: ${new Date(jwtExp).toISOString()}). Use PELOTON_USERNAME and PELOTON_PASSWORD auto-login, or provide a fresh manual override token.` }],
+          content: [{ type: 'text', text: `Access token is already expired (exp: ${new Date(jwtExp).toISOString()}). Provide a fresh token pair from the browser.` }],
         };
       }
 
-      const jwtUserId = parseJwtUserId(credential);
       const existingToken = await loadToken();
-      const authToken: PelotonAuthToken = {
-        access_token: credential,
-        ...(existingToken?.session_id ? { session_id: existingToken.session_id } : {}),
-        token_type: 'Bearer',
-        expires_at: jwtExp ?? Date.now() + (25 * 24 * 60 * 60 * 1000),
-        user_id: jwtUserId,
-      };
+      const authToken = buildBootstrapToken(credential, refreshCredential, existingToken);
       await saveToken(authToken);
 
       pelotonClient = new PelotonClient(credential);
@@ -171,17 +183,17 @@ function createMcpServer(): Server {
       return {
         content: [{
           type: 'text',
-          text: `Authentication refreshed successfully!\n\n` +
-            `Method: Manual override Bearer token (validated locally)\n` +
+          text: `Peloton OAuth credentials stored.\n\n` +
+            `Method: Browser bootstrap (access + refresh token)\n` +
             `Token Type: ${authToken.token_type}\n` +
             `User ID: ${authToken.user_id}\n` +
             `Expires: ${expiresDate}\n\n` +
-            `All Peloton tools are now available. Future auth recovery will prefer PELOTON_USERNAME/PELOTON_PASSWORD auto-login when configured.`
+            `All Peloton tools are now available. Auth0 refresh will renew tokens automatically before expiry.`
         }],
       };
     } catch (error: unknown) {
       return {
-        content: [{ type: 'text', text: `Failed to refresh authentication: ${isError(error) ? error.message : 'Unknown error'}` }],
+        content: [{ type: 'text', text: `Failed to store authentication: ${isError(error) ? error.message : 'Unknown error'}` }],
       };
     }
   }
@@ -195,7 +207,7 @@ function createMcpServer(): Server {
       content: [
         {
           type: 'text',
-          text: `Error: Peloton auto-login is not connected. ${authFailureReason ?? 'Set PELOTON_USERNAME and PELOTON_PASSWORD, then retry.'}\n\nManual token override is available through peloton_refresh_token only when auto-login cannot be used.`,
+          text: `Error: Peloton is not authenticated. ${authFailureReason ?? 'Bootstrap once with peloton_refresh_token (browser access + refresh token).'}`,
         },
       ],
     };
@@ -230,7 +242,18 @@ function createMcpServer(): Server {
 }
 
 async function setupPelotonAuth(): Promise<void> {
-  let token = await loadToken();
+  let token = await loadTokenIncludingExpired();
+
+  if (token?.refresh_token && isTokenExpiring(token, PROACTIVE_EXPIRY_BUFFER_MS)) {
+    try {
+      console.error('[Init] Proactive OAuth refresh for stored credentials...');
+      token = await refreshOAuthTokenAndPersist(token);
+      console.error(`[Init] OAuth refresh successful for user ${token.user_id}`);
+    } catch (error: unknown) {
+      console.error('[Init] OAuth refresh failed:', isError(error) ? error.message : 'Unknown error');
+      token = await loadToken();
+    }
+  }
 
   if (!token) {
     const username = process.env.PELOTON_USERNAME;
@@ -248,9 +271,14 @@ async function setupPelotonAuth(): Promise<void> {
   }
 
   if (!token) {
+    token = await loadToken();
+  }
+
+  if (!token) {
     console.error('[Init] No valid auth credential available');
-    console.error('[Init] Running in degraded mode — set PELOTON_USERNAME and PELOTON_PASSWORD for auto-login');
-    authFailureReason = 'No valid auth credential available. Set PELOTON_USERNAME and PELOTON_PASSWORD for auto-login.';
+    console.error('[Init] Running in degraded mode — bootstrap with peloton_refresh_token (access + refresh) or PELOTON_USERNAME/PELOTON_PASSWORD');
+    authFailureReason =
+      'No valid auth credential available. Bootstrap once with peloton_refresh_token (browser access + refresh token), or set PELOTON_USERNAME and PELOTON_PASSWORD.';
     console.error(`[Init] Registered ${allTools.length} tools (auto-login will be retried on tool calls; peloton_refresh_token is manual override only)`);
     return;
   }
