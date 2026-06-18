@@ -22,7 +22,6 @@ export function createHttpApp(): Hono<Env> {
   const oauthClientSecret = process.env.OAUTH_CLIENT_SECRET;
 
   const isAuthorized = (authHeader: string | undefined): boolean => {
-    if (!mcpAuthToken) return true;
     return authHeader === `Bearer ${mcpAuthToken}`;
   };
 
@@ -153,6 +152,14 @@ export async function startHttpServer(createMcpServer: () => Server): Promise<vo
   const PORT = Number(process.env.PORT ?? 8080);
   const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
 
+  // Auth is mandatory: the HTTP server exposes /mcp and the credential-overwrite
+  // endpoint /update-peloton-token. Without a bearer secret both would serve
+  // unauthenticated, so refuse to start rather than silently failing open.
+  if (!mcpAuthToken) {
+    console.error('❌ MCP_AUTH_TOKEN must be set when running the HTTP server');
+    process.exit(1);
+  }
+
   const app = createHttpApp();
   const honoListener = getRequestListener(app.fetch);
 
@@ -161,7 +168,7 @@ export async function startHttpServer(createMcpServer: () => Server): Promise<vo
 
     // /mcp: create a fresh transport + server per request (SDK v1.27+ stateless requirement)
     if (urlPath === '/mcp') {
-      if (mcpAuthToken && req.headers['authorization'] !== `Bearer ${mcpAuthToken}`) {
+      if (req.headers['authorization'] !== `Bearer ${mcpAuthToken}`) {
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Unauthorized' }));
         return;
