@@ -194,6 +194,46 @@ describe('PelotonClient', () => {
     expect(result[0]?.fitness_discipline).toBe('cycling');
   });
 
+  it('searchWorkouts filters a larger pool before applying the limit', async () => {
+    nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
+    const baseTimestamp = 1_700_000_000;
+    for (let index = 0; index < 10; index += 1) {
+      await upsertWorkout(
+        makeMockWorkout({
+          id: `workout-${index}`,
+          created_at: baseTimestamp - index,
+          fitness_discipline: index === 7 ? 'cycling' : 'strength',
+        })
+      );
+    }
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const result = await client.searchWorkouts({ discipline: 'cycling', limit: 1 });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('workout-7');
+  });
+
+  it('searchWorkouts applies the limit after filtering', async () => {
+    nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
+    const baseTimestamp = 1_700_000_000;
+    for (let index = 0; index < 5; index += 1) {
+      await upsertWorkout(
+        makeMockWorkout({
+          id: `cycling-${index}`,
+          created_at: baseTimestamp - index,
+          fitness_discipline: 'cycling',
+        })
+      );
+    }
+
+    const client = new PelotonClient('eyJhbGciOiJSUzI1NiJ9.fake.token');
+    const result = await client.searchWorkouts({ discipline: 'cycling', limit: 2 });
+
+    expect(result).toHaveLength(2);
+    expect(result.map((workout) => workout.id)).toEqual(['cycling-0', 'cycling-1']);
+  });
+
   it('cache behavior avoids repeated HTTP for same workouts endpoint', async () => {
     nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'testuser', id: 'user123' });
     const workoutsScope = nock(PELOTON_API_URL)

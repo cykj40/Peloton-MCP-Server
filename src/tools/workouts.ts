@@ -53,6 +53,14 @@ export const workoutTools = [
 export type WorkoutToolName = (typeof workoutTools)[number]['name'];
 type WorkoutToolArgs = z.infer<typeof WorkoutSearchSchema>;
 
+function getAverageOutputWatts(workout: PelotonWorkout): number | null {
+  if (workout.total_work == null || workout.duration <= 0) {
+    return null;
+  }
+
+  return Math.round((workout.total_work / workout.duration) * 10) / 10;
+}
+
 export async function handleWorkoutTool(
   name: WorkoutToolName,
   args: WorkoutToolArgs,
@@ -94,7 +102,7 @@ export async function handleWorkoutTool(
         fitness_discipline: workout.fitness_discipline,
         start_time: workout.created_at,
         duration_seconds: workout.duration,
-        output_watts: workout.total_work ?? null,
+        output_watts: getAverageOutputWatts(workout),
       }));
       return {
         content: [{ type: 'text', text: JSON.stringify(jsonWorkouts) }],

@@ -28,6 +28,7 @@ import { loginWithPassword, refreshOAuthTokenAndPersist, refreshToken } from './
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
 const cache = new Map<string, CacheItem<unknown>>();
+const FILTERED_WORKOUT_FETCH_SIZE = 500;
 
 function getEndpoint(config: AxiosRequestConfig): string {
   const url = config.url ?? 'unknown-endpoint';
@@ -528,15 +529,19 @@ export class PelotonClient {
 
     const dbCount = await getWorkoutCount();
     let workouts: PelotonWorkout[];
+    const hasFilters = Boolean(
+      params.discipline || params.instructor || params.startDate || params.endDate
+    );
+    const fetchSize = hasFilters ? FILTERED_WORKOUT_FETCH_SIZE : (params.limit ?? 50);
 
     const now = Math.floor(Date.now() / 1000);
     const thirtyMinAgo = now - 1800;
 
     if (dbCount > 0 && (!params.startDate || params.startDate.getTime() / 1000 < thirtyMinAgo)) {
       console.error(`[DB] Using database for workout search (${dbCount} workouts cached)`);
-      workouts = await this.getWorkoutsFromDB(params.limit ?? 50);
+      workouts = await this.getWorkoutsFromDB(fetchSize);
     } else {
-      workouts = await this.getRecentWorkouts(params.limit ?? 50);
+      workouts = await this.getRecentWorkouts(fetchSize);
     }
 
     let filtered = workouts;
@@ -567,7 +572,7 @@ export class PelotonClient {
       filtered = filtered.filter((workout) => workout.created_at <= endTimestamp);
     }
 
-    return filtered;
+    return params.limit === undefined ? filtered : filtered.slice(0, params.limit);
   }
 
   /**

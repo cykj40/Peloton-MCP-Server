@@ -24,6 +24,32 @@ describe('handleWorkoutTool', () => {
     expect(Array.isArray(parsed.workouts)).toBe(true);
   });
 
+  it.each([
+    { totalWork: 440_673.59, expectedWatts: 122.4 },
+    { totalWork: undefined, expectedWatts: null },
+    { totalWork: 0, expectedWatts: 0 },
+  ])(
+    'returns average output watts for total_work $totalWork',
+    async ({ totalWork, expectedWatts }) => {
+      const client = {
+        searchWorkouts: vi.fn().mockResolvedValue([
+          makeMockWorkout({ duration: 3600, total_work: totalWork }),
+        ]),
+      } as unknown as Parameters<typeof handleWorkoutTool>[2];
+
+      const result = await handleWorkoutTool(
+        'peloton_get_workouts',
+        { limit: 10, json_response: true },
+        client
+      );
+      const parsed = JSON.parse(result.content[0]?.text ?? '[]') as Array<{
+        output_watts: number | null;
+      }>;
+
+      expect(parsed[0]?.output_watts).toBe(expectedWatts);
+    }
+  );
+
   it('passes discipline filter to searchWorkouts', async () => {
     const client = {
       searchWorkouts: vi.fn().mockResolvedValue([]),
