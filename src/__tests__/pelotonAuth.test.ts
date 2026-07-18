@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import nock from 'nock';
+
+vi.mock('../db/queries.js', () => ({
+  getStoredAuthToken: vi.fn(),
+  upsertAuthToken: vi.fn(),
+  deleteStoredAuthToken: vi.fn(),
+}));
+
 import {
   PELOTON_API_URL,
   PELOTON_AUTH_CLIENT_ID,
@@ -11,7 +18,11 @@ import {
   refreshOAuthTokenAndPersist,
   refreshToken,
 } from '../services/pelotonAuth.js';
-import { PelotonAuthToken } from '../services/tokenStore.js';
+import { getStoredAuthToken, upsertAuthToken } from '../db/queries.js';
+import { loadTokenIncludingExpired, PelotonAuthToken, setRuntimeToken } from '../services/tokenStore.js';
+
+const getStoredAuthTokenMock = vi.mocked(getStoredAuthToken);
+const upsertAuthTokenMock = vi.mocked(upsertAuthToken);
 
 function nockLoginPost(body?: Record<string, string>): nock.Scope {
   return nock(PELOTON_API_URL).post('/auth/login?=', body);
@@ -21,6 +32,7 @@ describe('pelotonAuth', () => {
   beforeEach(() => {
     nock.cleanAll();
     vi.restoreAllMocks();
+    getStoredAuthTokenMock.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -111,7 +123,7 @@ describe('pelotonAuth', () => {
       expect(logged).not.toContain('password123');
     });
 
-    it('throws when persist fails after refresh', async () => {
+    it('keeps a rotated token in memory and retries persistence after failures', async () => {
       const token: PelotonAuthToken = {
         access_token: 'old_token',
         refresh_token: 'refresh123',
@@ -128,12 +140,66 @@ describe('pelotonAuth', () => {
           expires_in: 172800,
         });
 
-      const saveModule = await import('../services/tokenStore.js');
-      vi.spyOn(saveModule, 'saveToken').mockRejectedValueOnce(new Error('db unavailable'));
+      upsertAuthTokenMock.mockRejectedValue(new Error('db unavailable'));
 
-      await expect(refreshOAuthTokenAndPersist(token)).rejects.toThrow(
-        'Failed to persist auth tokens after OAuth refresh'
-      );
+      const result = await refreshOAuthTokenAndPersist(token);
+
+      expect(result.refresh_token).toBe('refresh456');
+      expect(upsertAuthTokenMock).toHaveBeenCalledTimes(3);
+
+      upsertAuthTokenMock.mockResolvedValue();
+      await expect(loadTokenIncludingExpired()).resolves.toEqual(result);
+      expect(upsertAuthTokenMock).toHaveBeenCalledTimes(4);
+    });
+
+    it('adopts a newer non-expiring Turso token instead of refreshing stale memory', async () => {
+      const staleToken: PelotonAuthToken = {
+        access_token: 'eyJ.stale.access',
+        refresh_token: 'refresh-stale',
+        token_type: 'Bearer',
+        expires_at: Date.now() - 1_000,
+        user_id: 'user123',
+      };
+      const tursoToken: PelotonAuthToken = {
+        access_token: 'eyJ.turso.access',
+        refresh_token: 'refresh-current',
+        token_type: 'Bearer',
+        expires_at: Date.now() + 3 * 60 * 60 * 1000,
+        user_id: 'user123',
+      };
+      getStoredAuthTokenMock.mockResolvedValue(tursoToken);
+      setRuntimeToken(staleToken);
+      const axiosModule = await import('axios');
+      const postSpy = vi.spyOn(axiosModule.default, 'post');
+
+      await expect(refreshOAuthTokenAndPersist(staleToken)).resolves.toEqual(tursoToken);
+      expect(postSpy).not.toHaveBeenCalled();
+    });
+
+    it('shares concurrent refreshes in one Auth0 request', async () => {
+      const token: PelotonAuthToken = {
+        access_token: 'old_token',
+        refresh_token: 'refresh123',
+        token_type: 'Bearer',
+        expires_at: Date.now() - 1_000,
+        user_id: 'user123',
+      };
+      setRuntimeToken(token);
+      const authScope = nock(PELOTON_AUTH_TOKEN_URL)
+        .post('')
+        .reply(200, {
+          access_token: 'eyJhbGciOiJSUzI1NiJ9.single-flight',
+          refresh_token: 'refresh456',
+          expires_in: 172800,
+        });
+
+      const [first, second] = await Promise.all([
+        refreshOAuthTokenAndPersist(token),
+        refreshOAuthTokenAndPersist(token),
+      ]);
+
+      expect(first).toEqual(second);
+      expect(authScope.isDone()).toBe(true);
     });
   });
 
@@ -149,6 +215,7 @@ describe('pelotonAuth', () => {
         expires_at: Date.now() - 1000,
         user_id: 'user123',
       };
+      setRuntimeToken(token);
 
       nock(PELOTON_AUTH_TOKEN_URL)
         .post('')
@@ -176,6 +243,7 @@ describe('pelotonAuth', () => {
         expires_at: Date.now() - 1000,
         user_id: 'user123',
       };
+      setRuntimeToken(token);
 
       nock(PELOTON_AUTH_TOKEN_URL).post('').reply(401, { error: 'invalid_grant' });
 

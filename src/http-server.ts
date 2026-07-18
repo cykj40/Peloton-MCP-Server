@@ -4,10 +4,10 @@ import { getRequestListener, type HttpBindings } from '@hono/node-server';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
-import { buildBootstrapToken } from './services/pelotonAuth.js';
+import { buildBootstrapToken, serializeManualTokenOverride } from './services/pelotonAuth.js';
 import {
   loadToken,
-  saveToken,
+  saveTokenWithRetry,
   setRuntimeToken,
   type PelotonAuthToken,
 } from './services/tokenStore.js';
@@ -66,14 +66,14 @@ export function createHttpApp(): Hono<Env> {
         ? (body as { refresh_token: string }).refresh_token.trim()
         : undefined;
 
-    const existingToken = await loadToken();
-    const authToken: PelotonAuthToken = buildBootstrapToken(
-      accessToken,
-      refreshTokenValue,
-      existingToken
-    );
-    setRuntimeToken(authToken);
-    await saveToken(authToken);
+    // Bootstrap is a deliberate manual override, so it must not adopt a different Turso token.
+    const authToken = await serializeManualTokenOverride(async (): Promise<PelotonAuthToken> => {
+      const existingToken = await loadToken();
+      const nextToken = buildBootstrapToken(accessToken, refreshTokenValue, existingToken);
+      setRuntimeToken(nextToken);
+      await saveTokenWithRetry(nextToken);
+      return nextToken;
+    });
 
     return c.json({
       success: true,

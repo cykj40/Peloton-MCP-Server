@@ -25,6 +25,10 @@ const PelotonAuthTokenSchema = z.object({
 
 let runtimeToken: PelotonAuthToken | null = null;
 const DEFAULT_EXPIRY_BUFFER_MS = 60 * 1000;
+const PERSIST_RETRY_DELAY_MS = 500;
+const PERSIST_RETRY_COUNT = 2;
+
+let pendingPersistToken: PelotonAuthToken | null = null;
 
 export function setRuntimeToken(token: PelotonAuthToken): void {
   runtimeToken = token;
@@ -97,10 +101,16 @@ function buildEnvToken(): PelotonAuthToken | null {
 }
 
 export async function loadToken(): Promise<PelotonAuthToken | null> {
-  const dbToken = await getStoredAuthToken();
-  if (dbToken && !isTokenExpired(dbToken)) {
-    return assertValidToken(dbToken);
+  try {
+    const dbToken = await getStoredAuthToken();
+    if (dbToken && !isTokenExpired(dbToken)) {
+      return assertValidToken(dbToken);
+    }
+  } catch (error: unknown) {
+    console.error('[Token] Turso unavailable; falling back to in-memory token state');
   }
+
+  await retryPendingTokenPersistence();
 
   if (runtimeToken && !isTokenExpired(runtimeToken)) {
     return runtimeToken;
@@ -119,10 +129,16 @@ export async function loadToken(): Promise<PelotonAuthToken | null> {
 
 export async function loadTokenIncludingExpired(): Promise<PelotonAuthToken | null> {
   // Turso is authoritative — must load before runtime so forced expiry triggers refresh.
-  const dbToken = await getStoredAuthToken();
-  if (dbToken) {
-    return assertValidToken(dbToken);
+  try {
+    const dbToken = await getStoredAuthToken();
+    if (dbToken) {
+      return assertValidToken(dbToken);
+    }
+  } catch (error: unknown) {
+    console.error('[Token] Turso unavailable; falling back to in-memory token state');
   }
+
+  await retryPendingTokenPersistence();
 
   if (runtimeToken) {
     return assertValidToken(runtimeToken);
@@ -148,6 +164,49 @@ export async function saveToken(token: PelotonAuthToken): Promise<void> {
   } catch (error: unknown) {
     throw new CookieStoreError('Failed to save token to database', error);
   }
+}
+
+/**
+ * Persist a token without ever discarding an already-rotated refresh token.
+ * Returns false only after the initial attempt and two retries have all failed.
+ */
+export async function saveTokenWithRetry(token: PelotonAuthToken): Promise<boolean> {
+  for (let attempt = 0; attempt <= PERSIST_RETRY_COUNT; attempt += 1) {
+    try {
+      await saveToken(token);
+      if (pendingPersistToken?.access_token === token.access_token) {
+        pendingPersistToken = null;
+      }
+      return true;
+    } catch (error: unknown) {
+      const isFinalAttempt = attempt === PERSIST_RETRY_COUNT;
+      if (isFinalAttempt) {
+        pendingPersistToken = token;
+        console.error(
+          '[Auth] CRITICAL: rotated token is only in memory after persistence retries failed; persistence will be retried on the next token access.'
+        );
+        return false;
+      }
+
+      console.error(
+        `[Auth] Token persistence failed; retrying (${attempt + 1}/${PERSIST_RETRY_COUNT})...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, PERSIST_RETRY_DELAY_MS));
+    }
+  }
+
+  return false;
+}
+
+/** Retry a previously failed token persistence before serving the next token read. */
+export async function retryPendingTokenPersistence(): Promise<void> {
+  if (!pendingPersistToken) {
+    return;
+  }
+
+  const token = pendingPersistToken;
+  setRuntimeToken(token);
+  await saveTokenWithRetry(token);
 }
 
 export function isTokenExpiring(token: PelotonAuthToken, bufferMs = PROACTIVE_EXPIRY_BUFFER_MS): boolean {

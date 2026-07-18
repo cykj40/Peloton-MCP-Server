@@ -8,7 +8,43 @@ import {
   PELOTON_TOKEN_EXPIRES_IN_SECONDS,
 } from '../constants.js';
 import { isError, PelotonAuthError } from '../types/errors.js';
-import { parseJwtExpiry, parseJwtUserId, PelotonAuthToken, saveToken } from './tokenStore.js';
+import {
+  isTokenExpiring,
+  loadTokenIncludingExpired,
+  parseJwtExpiry,
+  parseJwtUserId,
+  PelotonAuthToken,
+  saveToken,
+  saveTokenWithRetry,
+  setRuntimeToken,
+} from './tokenStore.js';
+
+let authMutationTail: Promise<void> = Promise.resolve();
+let refreshInFlight: Promise<PelotonAuthToken> | null = null;
+
+function serializeAuthMutation<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = authMutationTail;
+  let release: () => void;
+  authMutationTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  return previous.then(async () => {
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  });
+}
+
+/**
+ * Runs a manual bootstrap write after any active refresh. This is process-local;
+ * rotating tokens are therefore supported with exactly one running machine.
+ */
+export function serializeManualTokenOverride<T>(operation: () => Promise<T>): Promise<T> {
+  return serializeAuthMutation(operation);
+}
 
 const OAuthTokenResponseSchema = z.object({
   access_token: z.string().min(1),
@@ -140,16 +176,39 @@ export async function refreshOAuthToken(token: PelotonAuthToken): Promise<Peloto
 }
 
 /**
- * Refresh via Auth0 and persist rotated refresh_token. Throws if persistence fails.
+ * Refresh via Auth0, preferring the Turso token immediately before the request.
+ * Concurrent callers share one request; this only coordinates a single process.
  */
 export async function refreshOAuthTokenAndPersist(token: PelotonAuthToken): Promise<PelotonAuthToken> {
-  const refreshed = await refreshOAuthToken(token);
-  try {
-    await saveToken(refreshed);
-  } catch (error: unknown) {
-    throw new PelotonAuthError('Failed to persist auth tokens after OAuth refresh', error);
+  if (refreshInFlight) {
+    return refreshInFlight;
   }
-  return refreshed;
+
+  refreshInFlight = serializeAuthMutation(async () => {
+    const storedToken = await loadTokenIncludingExpired();
+    const tokenToRefresh = storedToken ?? token;
+
+    if (
+      storedToken &&
+      storedToken.refresh_token !== token.refresh_token &&
+      !isTokenExpiring(storedToken)
+    ) {
+      console.error('[Auth] Adopted newer Turso token; skipping stale refresh request');
+      setRuntimeToken(storedToken);
+      return storedToken;
+    }
+
+    const refreshed = await refreshOAuthToken(tokenToRefresh);
+    setRuntimeToken(refreshed);
+    await saveTokenWithRetry(refreshed);
+    return refreshed;
+  });
+
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
 }
 
 /**

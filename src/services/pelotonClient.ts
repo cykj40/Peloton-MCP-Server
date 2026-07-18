@@ -305,7 +305,7 @@ export class PelotonClient {
 
   private async getActiveToken(): Promise<PelotonAuthToken> {
     let expiredTokenAutoLoginFailed = false;
-    const storedToken = this.cachedToken ?? await loadTokenIncludingExpired();
+    const storedToken = await loadTokenIncludingExpired() ?? this.cachedToken;
     if (storedToken && isTokenExpiring(storedToken, PROACTIVE_EXPIRY_BUFFER_MS)) {
       const refreshedToken = await this.proactiveRefresh(storedToken, 'cached token expired or nearing expiry');
       if (refreshedToken) {
