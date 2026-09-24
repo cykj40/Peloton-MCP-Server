@@ -36,14 +36,16 @@ loadEnvFile(resolve(process.cwd(), '../t1pilot/apps/web/.env.local'))
 
 const username = process.env.PELOTON_USERNAME
 const password = process.env.PELOTON_PASSWORD
-const mcpAuth = process.env.PELOTON_MCP_AUTH_TOKEN ?? process.env.MCP_AUTH_TOKEN
+const updateSecret = process.env.PELOTON_TOKEN_UPDATE_SECRET
+// Admin listener is private (Fly 6PN): run `fly proxy 9091:9091 -a peloton-mcp-server` first.
+const updateUrl = process.env.PELOTON_TOKEN_UPDATE_URL ?? 'http://localhost:9091/update-peloton-token'
 
 if (!username || !password) {
   console.error('Missing PELOTON_USERNAME or PELOTON_PASSWORD in .env')
   process.exit(1)
 }
-if (!mcpAuth) {
-  console.error('Missing PELOTON_MCP_AUTH_TOKEN (or MCP_AUTH_TOKEN) in .env')
+if (!updateSecret) {
+  console.error('Missing PELOTON_TOKEN_UPDATE_SECRET in .env')
   process.exit(1)
 }
 
@@ -106,10 +108,10 @@ try {
   )
 
   const tokens = JSON.parse(readFileSync(TOKEN_CACHE, 'utf8'))
-  const curlRes = await fetch('https://peloton-mcp-server.fly.dev/update-peloton-token', {
+  const curlRes = await fetch(updateUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${mcpAuth}`,
+      Authorization: `Bearer ${updateSecret}`,
       'content-type': 'application/json',
     },
     body: JSON.stringify({

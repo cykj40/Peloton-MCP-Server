@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { Hono } from 'hono';
 import { getRequestListener, type HttpBindings } from '@hono/node-server';
@@ -5,6 +6,12 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { buildBootstrapToken, serializeManualTokenOverride } from './services/pelotonAuth.js';
+import {
+  createAuthCodeStore,
+  isValidCodeChallenge,
+  parseAllowedRedirectUris,
+  verifyPkce,
+} from './services/oauthCodes.js';
 import {
   loadToken,
   saveTokenWithRetry,
@@ -20,10 +27,8 @@ export function createHttpApp(): Hono<Env> {
   const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
   const oauthClientId = process.env.OAUTH_CLIENT_ID;
   const oauthClientSecret = process.env.OAUTH_CLIENT_SECRET;
-
-  const isAuthorized = (authHeader: string | undefined): boolean => {
-    return authHeader === `Bearer ${mcpAuthToken}`;
-  };
+  const allowedRedirectUris = parseAllowedRedirectUris(process.env.ALLOWED_REDIRECT_URIS);
+  const authCodes = createAuthCodeStore();
 
   // Health check — no auth required (Fly.io uses this)
   app.get('/health', (c) => c.json({ status: 'ok', app: 'peloton-mcp-server' }));
@@ -39,9 +44,116 @@ export function createHttpApp(): Hono<Env> {
     );
   });
 
+  // OAuth 2.0 discovery — required by claude.ai remote MCP connectors
+  app.get('/.well-known/oauth-authorization-server', (c) => {
+    const url = new URL(c.req.url);
+    const proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
+    const base = `${proto}://${url.host}`;
+    return c.json({
+      issuer: base,
+      authorization_endpoint: `${base}/authorize`,
+      token_endpoint: `${base}/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code'],
+      token_endpoint_auth_methods_supported: ['client_secret_post'],
+      code_challenge_methods_supported: ['S256'],
+    });
+  });
+
+  // OAuth authorize — issues a single-use, PKCE-bound code; never the bearer itself
+  app.get('/authorize', (c) => {
+    const responseType = c.req.query('response_type');
+    const clientId = c.req.query('client_id');
+    const redirectUri = c.req.query('redirect_uri');
+    const state = c.req.query('state');
+    const codeChallenge = c.req.query('code_challenge');
+    const codeChallengeMethod = c.req.query('code_challenge_method');
+
+    if (!oauthClientId || clientId !== oauthClientId) {
+      return c.json({ error: 'invalid_client' }, 401);
+    }
+    // Never redirect to an unregistered URI, even to report an error (RFC 6749 §4.1.2.1).
+    if (!redirectUri || !allowedRedirectUris.has(redirectUri)) {
+      return c.json({ error: 'invalid_request', error_description: 'redirect_uri not allowed' }, 400);
+    }
+    if (responseType !== 'code') {
+      return c.json({ error: 'unsupported_response_type' }, 400);
+    }
+    if (codeChallengeMethod !== 'S256' || !codeChallenge || !isValidCodeChallenge(codeChallenge)) {
+      return c.json({ error: 'invalid_request', error_description: 'PKCE S256 code_challenge required' }, 400);
+    }
+
+    const code = authCodes.issue({ clientId, redirectUri, codeChallenge });
+    if (!code) {
+      return c.json({ error: 'temporarily_unavailable' }, 503);
+    }
+
+    const redirectUrl = new URL(redirectUri);
+    redirectUrl.searchParams.set('code', code);
+    if (state) redirectUrl.searchParams.set('state', state);
+    return c.redirect(redirectUrl.toString());
+  });
+
+  // OAuth token — the only place the bearer is ever returned
+  app.post('/token', async (c) => {
+    const body = await c.req.parseBody();
+    const grantType = String(body['grant_type'] ?? '');
+    const code = String(body['code'] ?? '');
+    const clientId = String(body['client_id'] ?? '');
+    const clientSecret = String(body['client_secret'] ?? '');
+    const redirectUri = String(body['redirect_uri'] ?? '');
+    const codeVerifier = String(body['code_verifier'] ?? '');
+
+    if (!oauthClientId || !oauthClientSecret || !mcpAuthToken) {
+      return c.json({ error: 'server_error', error_description: 'OAuth not configured' }, 503);
+    }
+    const expectedSecret = Buffer.from(oauthClientSecret);
+    const actualSecret = Buffer.from(clientSecret);
+    if (
+      clientId !== oauthClientId ||
+      expectedSecret.length !== actualSecret.length ||
+      !timingSafeEqual(expectedSecret, actualSecret)
+    ) {
+      return c.json({ error: 'invalid_client' }, 401);
+    }
+    if (grantType !== 'authorization_code') {
+      return c.json({ error: 'unsupported_grant_type' }, 400);
+    }
+    const grant = authCodes.consume(code);
+    if (
+      !grant ||
+      grant.clientId !== clientId ||
+      grant.redirectUri !== redirectUri ||
+      !verifyPkce(codeVerifier, grant.codeChallenge)
+    ) {
+      return c.json({ error: 'invalid_grant' }, 400);
+    }
+
+    return c.json({ access_token: mcpAuthToken, token_type: 'bearer', expires_in: 3600 });
+  });
+
+  return app;
+}
+
+export const ADMIN_PORT_DEFAULT = 9091;
+
+function bearerMatches(authHeader: string | undefined, secret: string | undefined): boolean {
+  if (!secret || !authHeader) return false;
+  const expected = Buffer.from(`Bearer ${secret}`);
+  const actual = Buffer.from(authHeader);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+// Served only on the private admin listener; the public app has no route for this.
+export function createAdminApp(): Hono<Env> {
+  const app = new Hono<Env>();
+  const configuredSecret = process.env.PELOTON_TOKEN_UPDATE_SECRET;
+  // A stolen MCP bearer must never unlock this route, even if misconfigured.
+  const updateSecret = configuredSecret !== process.env.MCP_AUTH_TOKEN ? configuredSecret : undefined;
+
   // Manual override for updating a Peloton Bearer token at runtime.
   app.post('/update-peloton-token', async (c) => {
-    if (!isAuthorized(c.req.header('authorization'))) {
+    if (!bearerMatches(c.req.header('authorization'), updateSecret)) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
@@ -83,81 +195,27 @@ export function createHttpApp(): Hono<Env> {
     });
   });
 
-  // OAuth 2.0 discovery — required by claude.ai remote MCP connectors
-  app.get('/.well-known/oauth-authorization-server', (c) => {
-    const url = new URL(c.req.url);
-    const proto = c.req.header('x-forwarded-proto') ?? url.protocol.replace(':', '');
-    const base = `${proto}://${url.host}`;
-    return c.json({
-      issuer: base,
-      authorization_endpoint: `${base}/authorize`,
-      token_endpoint: `${base}/token`,
-      response_types_supported: ['code'],
-      grant_types_supported: ['authorization_code'],
-      token_endpoint_auth_methods_supported: ['client_secret_post'],
-    });
-  });
-
-  // OAuth authorize — redirects back with code = MCP_AUTH_TOKEN
-  app.get('/authorize', (c) => {
-    const responseType = c.req.query('response_type');
-    const clientId = c.req.query('client_id');
-    const redirectUri = c.req.query('redirect_uri');
-    const state = c.req.query('state');
-
-    if (!oauthClientId || clientId !== oauthClientId) {
-      return c.json({ error: 'invalid_client' }, 401);
-    }
-    if (responseType !== 'code') {
-      return c.json({ error: 'unsupported_response_type' }, 400);
-    }
-    if (!redirectUri) {
-      return c.json({ error: 'invalid_request', error_description: 'redirect_uri required' }, 400);
-    }
-
-    const redirectUrl = new URL(redirectUri);
-    redirectUrl.searchParams.set('code', mcpAuthToken ?? '');
-    if (state) redirectUrl.searchParams.set('state', state);
-    return c.redirect(redirectUrl.toString());
-  });
-
-  // OAuth token — exchanges code for access_token
-  app.post('/token', async (c) => {
-    const body = await c.req.parseBody();
-    const grantType = String(body['grant_type'] ?? '');
-    const code = String(body['code'] ?? '');
-    const clientId = String(body['client_id'] ?? '');
-    const clientSecret = String(body['client_secret'] ?? '');
-
-    if (!oauthClientId || !oauthClientSecret) {
-      return c.json({ error: 'server_error', error_description: 'OAuth not configured' }, 503);
-    }
-    if (clientId !== oauthClientId || clientSecret !== oauthClientSecret) {
-      return c.json({ error: 'invalid_client' }, 401);
-    }
-    if (grantType !== 'authorization_code') {
-      return c.json({ error: 'unsupported_grant_type' }, 400);
-    }
-    if (code !== mcpAuthToken) {
-      return c.json({ error: 'invalid_grant' }, 400);
-    }
-
-    return c.json({ access_token: mcpAuthToken, token_type: 'bearer', expires_in: 3600 });
-  });
-
   return app;
 }
 
 export async function startHttpServer(createMcpServer: () => Server): Promise<void> {
   const PORT = Number(process.env.PORT ?? 8080);
   const mcpAuthToken = process.env.MCP_AUTH_TOKEN;
+  const updateSecret = process.env.PELOTON_TOKEN_UPDATE_SECRET;
 
-  // Auth is mandatory: the HTTP server exposes /mcp and the credential-overwrite
-  // endpoint /update-peloton-token. Without a bearer secret both would serve
-  // unauthenticated, so refuse to start rather than silently failing open.
+  // Auth is mandatory: the HTTP server exposes /mcp publicly. Without a bearer
+  // secret it would serve unauthenticated, so refuse to start rather than
+  // silently failing open.
   if (!mcpAuthToken) {
     console.error('❌ MCP_AUTH_TOKEN must be set when running the HTTP server');
     process.exit(1);
+  }
+  if (updateSecret && updateSecret === mcpAuthToken) {
+    console.error('❌ PELOTON_TOKEN_UPDATE_SECRET must differ from MCP_AUTH_TOKEN');
+    process.exit(1);
+  }
+  if (parseAllowedRedirectUris(process.env.ALLOWED_REDIRECT_URIS).size === 0) {
+    console.error('⚠️ ALLOWED_REDIRECT_URIS is empty — /authorize will reject every request');
   }
 
   const app = createHttpApp();
@@ -212,4 +270,20 @@ export async function startHttpServer(createMcpServer: () => Server): Promise<vo
     console.error(`[Server] MCP endpoint: http://localhost:${PORT}/mcp`);
     console.error(`[Server] Health check: http://localhost:${PORT}/health`);
   });
+
+  if (!updateSecret) {
+    console.error('[Server] PELOTON_TOKEN_UPDATE_SECRET not set — admin listener disabled');
+    return;
+  }
+  const adminPort = Number(process.env.ADMIN_PORT ?? ADMIN_PORT_DEFAULT);
+  // fly-local-6pn is this machine's private IPv6; the port must stay out of fly.toml services.
+  const adminHost = process.env.ADMIN_HOST ?? (process.env.FLY_APP_NAME ? 'fly-local-6pn' : '127.0.0.1');
+  http
+    .createServer(getRequestListener(createAdminApp().fetch))
+    .on('error', (error: Error) => {
+      console.error(`[Server] Admin listener failed: ${error.message}`);
+    })
+    .listen(adminPort, adminHost, () => {
+      console.error(`[Server] Admin listener on ${adminHost}:${adminPort} (private network only)`);
+    });
 }
