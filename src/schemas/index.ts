@@ -86,3 +86,8 @@ export const CorrelationResponseSchema = z.object({
 export const SyncWorkoutsSchema = z.object({
   limit: z.number().int().min(1).max(100).default(50),
 }).strict();
+
+export const MuscleActivityChartSchema = z.object({
+  days: z.number().int().min(1).max(90).default(7),
+  weighting: z.enum(['raw', 'per_minute']).default('raw'),
+}).strict();

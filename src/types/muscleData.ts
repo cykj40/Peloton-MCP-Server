@@ -47,3 +47,24 @@ export interface BodyActivityData {
   topSix: BodyActivityMuscleScore[];
   other: number;
 }
+
+export type MuscleScores = Partial<Record<PelotonMuscleKey, number>>;
+
+/** A completed class from this user's history, with unweighted Peloton class scores. */
+export interface MuscleSession {
+  rideId: string;
+  title: string;
+  discipline: string;
+  durationSeconds: number;
+  scores: MuscleScores;
+}
+
+export interface MuscleDataContext {
+  data: MuscleData;
+  /** Period totals in the selected weighting's units; empty for estimate fallback. */
+  scores: MuscleScores;
+  workouts: import('./index.js').PelotonWorkout[];
+  history: MuscleSession[];
+  start: number;
+  end: number;
+}

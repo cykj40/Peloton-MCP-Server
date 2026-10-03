@@ -3,7 +3,7 @@ import { impactToPelotonPercentages } from './musclePercentages.js';
 import type { PelotonClient } from './pelotonClient.js';
 import { RideMuscleCache, rideMuscleCache } from './rideMuscleCache.js';
 import { PELOTON_MUSCLE_KEYS } from '../types/muscleData.js';
-import type { MuscleData, MuscleDataSource, MusclePercentages, MuscleWeighting, PelotonMuscleKey, PelotonMuscleScore } from '../types/muscleData.js';
+import type { MuscleData, MuscleDataContext, MuscleDataSource, MusclePercentages, MuscleWeighting, PelotonMuscleKey, PelotonMuscleScore } from '../types/muscleData.js';
 
 type MuscleClient = Pick<PelotonClient, 'getWorkoutsInWindow' | 'getRideMuscleScores'>;
 
@@ -29,6 +29,15 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
   ) {}
 
   async getMuscleData(days: number, weighting: MuscleWeighting = 'raw'): Promise<MuscleData> {
+    return (await this.load(days, weighting, days)).data;
+  }
+
+  /** One history fetch supplies both the rolling period and candidate classes from 90 days. */
+  async getMuscleDataContext(days: number, weighting: MuscleWeighting = 'raw'): Promise<MuscleDataContext> {
+    return this.load(days, weighting, 90);
+  }
+
+  private async load(days: number, weighting: MuscleWeighting, historyDays: number): Promise<MuscleDataContext> {
     if (!Number.isInteger(days) || days < 1 || days > 90) {
       throw new RangeError('days must be an integer from 1 to 90');
     }
@@ -37,11 +46,13 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
     }
     const end = this.now();
     const start = end - days * 86_400_000;
-    const fetched = await this.client.getWorkoutsInWindow(new Date(start), new Date(end));
-    const workouts = [...new Map(fetched
-      .filter(w => w.created_at * 1000 >= start && w.created_at * 1000 <= end)
+    const historyStart = end - historyDays * 86_400_000;
+    const fetched = await this.client.getWorkoutsInWindow(new Date(historyStart), new Date(end));
+    const historyWorkouts = [...new Map(fetched
+      .filter(w => w.created_at * 1000 >= historyStart && w.created_at * 1000 <= end)
       .map(w => [w.id, w])).values()];
-    const rideIds = [...new Set(workouts.flatMap(w => w.ride?.id ? [w.ride.id] : []))];
+    const workouts = historyWorkouts.filter(w => w.created_at * 1000 >= start);
+    const rideIds = [...new Set(historyWorkouts.flatMap(w => w.ride?.id ? [w.ride.id] : []))];
     const scoresByRide = new Map<string, PelotonMuscleScore[]>();
     await Promise.all(rideIds.map(async rideId => {
       try {
@@ -54,8 +65,24 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
       }
     }));
 
-    if (workouts.length > 0 && scoresByRide.size === 0) {
-      return { percentages: impactToPelotonPercentages(calculateMuscleImpact(workouts)), source: 'estimate', workoutsTotal: workouts.length, workoutsWithData: 0 };
+    const history = historyWorkouts.flatMap(workout => {
+      const entries = workout.ride?.id ? scoresByRide.get(workout.ride.id) : undefined;
+      if (!entries?.some(entry => entry.score > 0) || !workout.ride?.id ||
+          (workout.status !== undefined && workout.status !== 'COMPLETE')) return [];
+      const scores: MusclePercentages = {};
+      for (const entry of entries) {
+        const key = muscleKey(entry.muscle_group);
+        scores[key] = (scores[key] ?? 0) + entry.score;
+      }
+      return [{ rideId: workout.ride.id, title: workout.name, discipline: workout.fitness_discipline,
+        durationSeconds: workout.duration, scores }];
+    });
+    const hasPeriodResponse = workouts.some(workout => workout.ride?.id && scoresByRide.has(workout.ride.id));
+    if (workouts.length > 0 && !hasPeriodResponse) {
+      return {
+        data: { percentages: impactToPelotonPercentages(calculateMuscleImpact(workouts)), source: 'estimate', workoutsTotal: workouts.length, workoutsWithData: 0 },
+        scores: {}, workouts, history, start, end,
+      };
     }
 
     const totals: MusclePercentages = {};
@@ -82,6 +109,7 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
         if (totals[key] !== undefined) percentages[key] = 100 * totals[key] / totalScore;
       }
     }
-    return { percentages, source: 'peloton_class_data', workoutsTotal: workouts.length, workoutsWithData };
+    return { data: { percentages, source: 'peloton_class_data', workoutsTotal: workouts.length, workoutsWithData },
+      scores: totals, workouts, history, start, end };
   }
 }

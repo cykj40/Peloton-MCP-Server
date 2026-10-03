@@ -1,3 +1,5 @@
+import { MuscleActivityChartSchema } from '../schemas/index.js';
+import { muscleActivityChartTool, handleMuscleActivityChart } from './muscleActivityChart.js';
 import { z } from 'zod';
 import { PelotonClient } from '../services/pelotonClient.js';
 import { MuscleAnalysisSchema, WorkoutStatsSchema } from '../schemas/index.js';
@@ -12,10 +14,11 @@ import { isError } from '../types/errors.js';
 import { ToolResponse } from '../types/index.js';
 
 export const analyticsTools = [
+  muscleActivityChartTool,
   {
     name: 'peloton_muscle_activity',
     description:
-      'Get muscle group activity percentages for charting and visualization. Shows which muscle groups were worked over a time period. Useful for glycogen tracking in diabetes management.',
+      "Return muscle activity percentages, including raw JSON when requested. For training review, planning, what to work out today, or a visual muscle-balance report, use peloton_muscle_activity_chart.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -38,7 +41,7 @@ export const analyticsTools = [
   {
     name: 'peloton_muscle_impact',
     description:
-      'Get detailed muscle impact scores showing engagement level and workout frequency per muscle group. Helps understand which muscles need recovery.',
+      "Return estimated muscle impact scores and workout counts. For reviewing training, planning a balanced week, or deciding what to work out, use peloton_muscle_activity_chart.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -86,7 +89,7 @@ export const analyticsTools = [
   {
     name: 'peloton_training_balance',
     description:
-      'Analyze training balance between upper body, lower body, cardio, and strength. Helps identify training imbalances.',
+      "Return the legacy upper/lower-body balance summary. For training review, neglected muscles, planning, or what-to-do questions, use peloton_muscle_activity_chart.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -109,13 +112,15 @@ export const analyticsTools = [
 ] as const;
 
 export type AnalyticsToolName = (typeof analyticsTools)[number]['name'];
-type AnalyticsToolArgs = z.infer<typeof MuscleAnalysisSchema> | z.infer<typeof WorkoutStatsSchema>;
+type AnalyticsToolArgs = z.infer<typeof MuscleAnalysisSchema> | z.infer<typeof WorkoutStatsSchema> | z.infer<typeof MuscleActivityChartSchema>;
 
 export async function handleAnalyticsTool(
   name: AnalyticsToolName,
   args: AnalyticsToolArgs,
   client: PelotonClient
 ): Promise<ToolResponse> {
+  if (name === 'peloton_muscle_activity_chart') return handleMuscleActivityChart(args, client);
+
   try {
     if (name === 'peloton_muscle_activity') {
       const params = MuscleAnalysisSchema.parse(args);

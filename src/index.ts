@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { handleMuscleActivityChart } from './tools/muscleActivityChart.js';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 try { await import('dotenv/config'); } catch {}
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -81,6 +84,7 @@ type ToolName = ProfileToolName | WorkoutToolName | AnalyticsToolName | Correlat
 type ToolHandler = (args: unknown, client: PelotonClient) => Promise<ToolResponse>;
 
 const toolHandlers = {
+  peloton_muscle_activity_chart: (args, client) => handleMuscleActivityChart(args, client),
   peloton_test_connection: (args, client) =>
     handleProfileTool('peloton_test_connection', ConnectionTestSchema.parse(args), client),
   peloton_get_profile: (args, client) =>
@@ -127,7 +131,7 @@ function isToolName(name: string): name is ToolName {
   return name in toolHandlers;
 }
 
-function createMcpServer(): Server {
+export function createMcpServer(): Server {
   const srv = new Server(
     { name: 'peloton-mcp-server', version: '1.0.0' },
     { capabilities: { tools: {} } }
@@ -322,7 +326,9 @@ async function main(): Promise<void> {
   });
 }
 
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
 main().catch((error: unknown) => {
   console.error(`[Init] Fatal startup error: ${isError(error) ? error.message : 'Unknown error'}`);
   process.exit(1);
 });
+}
