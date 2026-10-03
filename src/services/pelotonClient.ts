@@ -32,6 +32,7 @@ type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
 const cache = new Map<string, CacheItem<unknown>>();
 const FILTERED_WORKOUT_FETCH_SIZE = 500;
+const MAX_WORKOUT_PAGES = 25;
 
 function getEndpoint(config: AxiosRequestConfig): string {
   const url = config.url ?? 'unknown-endpoint';
@@ -144,6 +145,10 @@ async function makeApiRequest<T>(
       const retryAfterMs = parseRetryAfterMs(
         axiosError ? getRetryAfterHeaderValue(axiosError) : undefined
       );
+
+      if (retryAfterMs > MAX_RETRY_DELAY) {
+        throw new PelotonRateLimitError(endpoint, retryAfterMs);
+      }
 
       if (retries < MAX_RETRIES) {
         const retryDelay = Math.max(
@@ -492,6 +497,9 @@ export class PelotonClient {
     }
     const workouts = new Map<string, PelotonWorkout>();
     for (let page = 0; ; page += 1) {
+      if (page >= MAX_WORKOUT_PAGES) {
+        throw new PelotonApiError('Workout pagination exceeded 25 pages', 200, '/api/user/<redacted>/workouts');
+      }
       const response = await this.getWorkoutsPage(100, page);
       let added = 0;
       for (const workout of response.data) {

@@ -7,6 +7,19 @@ import type { PelotonWorkout } from '../types/index.js';
 
 type MuscleClient = Pick<PelotonClient, 'getWorkoutsInWindow' | 'getRideMuscleScores'>;
 
+const loggedUnknownMuscles = new Set<string>();
+
+function muscleKey(key: string): PelotonMuscleKey {
+  const known = PELOTON_MUSCLE_KEYS.find(muscle => muscle === key);
+  if (known) return known;
+  if (!loggedUnknownMuscles.has(key)) {
+    loggedUnknownMuscles.add(key);
+    console.error(key);
+  }
+  return 'other';
+}
+
+
 /** Compatibility aliases for the legacy estimate, not a chart-region mapping.
  * Its broad back/upper_back categories are approximated as mid_back. No score is invented.
  */
@@ -47,7 +60,10 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
     const scoresByRide = new Map<string, PelotonMuscleScore[]>();
     await Promise.all(rideIds.map(async rideId => {
       try {
-        scoresByRide.set(rideId, await this.cache.get(rideId, () => this.client.getRideMuscleScores(rideId)));
+        const scores = await this.cache.get(rideId, () => this.client.getRideMuscleScores(rideId));
+        scoresByRide.set(rideId, scores.map(entry => ({
+          ...entry, muscle_group: muscleKey(entry.muscle_group),
+        })));
       } catch {
         // Failed rides reduce coverage. Never blend estimates into successful class data.
       }
@@ -66,7 +82,8 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
       workoutsWithData += 1;
       // Each performance counts, even when the class metadata was fetched only once.
       for (const { muscle_group, score } of scores) {
-        totals[muscle_group] = (totals[muscle_group] ?? 0) + score;
+        const key = muscleKey(muscle_group);
+        totals[key] = (totals[key] ?? 0) + score;
         totalScore += score;
       }
     }

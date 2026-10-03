@@ -1,17 +1,17 @@
 export const PELOTON_MUSCLE_KEYS = [
   'biceps', 'calves', 'chest', 'core', 'forearms', 'glutes', 'hamstrings', 'hips',
   'lats', 'low_back', 'mid_back', 'obliques', 'quads', 'shoulders', 'traps', 'triceps',
+  'other', // Catch-all for muscle keys added by Peloton.
 ] as const;
 
 export type PelotonMuscleKey = (typeof PELOTON_MUSCLE_KEYS)[number];
 export type MusclePercentages = Partial<Record<PelotonMuscleKey, number>>;
 
 export interface PelotonMuscleScore {
-  muscle_group: PelotonMuscleKey;
+  muscle_group: string;
   score: number;
-  percentage: number;
-  bucket: number;
-  display_name: string;
+  /** Optional API metadata is retained without constraining scoring. */
+  [metadata: string]: unknown;
 }
 
 export interface MuscleData {

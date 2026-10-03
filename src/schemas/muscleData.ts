@@ -1,14 +1,18 @@
 import { z } from 'zod';
-import { PELOTON_MUSCLE_KEYS } from '../types/muscleData.js';
 
 export const PelotonMuscleScoresSchema = z.array(z.object({
-  muscle_group: z.enum(PELOTON_MUSCLE_KEYS),
+  muscle_group: z.string(),
   score: z.number().finite().nonnegative(),
-  percentage: z.number().finite().min(0).max(100),
-  bucket: z.number().int().min(1).max(3),
-  display_name: z.string(),
-})).refine(scores => new Set(scores.map(s => s.muscle_group)).size === scores.length, {
-  message: 'Duplicate muscle keys',
+}).passthrough()).transform(scores => {
+  const merged = new Map<string, (typeof scores)[number]>();
+  for (const entry of scores) {
+    const previous = merged.get(entry.muscle_group);
+    if (previous) previous.score += entry.score;
+    else merged.set(entry.muscle_group, { ...entry });
+  }
+  return [...merged.values()];
+}).refine(scores => scores.every(entry => Number.isFinite(entry.score)), {
+  message: 'Summed muscle scores must be finite',
 });
 
 export const RideMuscleDetailsSchema = z.object({

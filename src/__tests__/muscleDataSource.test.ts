@@ -9,14 +9,15 @@ import { PelotonClassMuscleDataSource } from '../services/muscleDataSource.js';
 import { RideMuscleCache } from '../services/rideMuscleCache.js';
 import { saveToken } from '../services/tokenStore.js';
 import { PelotonMuscleScoresSchema } from '../schemas/muscleData.js';
-import type { PelotonMuscleKey, PelotonMuscleScore } from '../types/muscleData.js';
+import type { PelotonMuscleScore } from '../types/muscleData.js';
+import { PelotonApiError, PelotonRateLimitError } from '../types/errors.js';
 import { makeMockWorkout } from './fixtures.js';
 import { setupTestDb, teardownTestDb } from './testDb.js';
 
 const DAY = 86_400_000;
 const NOW = Date.UTC(2026, 9, 3, 12);
 const TOKEN = 'eyJhbGciOiJSUzI1NiJ9.fixture.token';
-const score = (muscle_group: PelotonMuscleKey, value: number): PelotonMuscleScore => ({
+const score = (muscle_group: string, value: number): PelotonMuscleScore => ({
   muscle_group, score: value, percentage: 50, bucket: 2, display_name: muscle_group,
 });
 const workout = (id: string, rideId: string | undefined, ageDays = 1) => makeMockWorkout({
@@ -210,29 +211,121 @@ describe('Peloton muscle data source', () => {
 
   it('validates score vectors without losing fractional scores', () => {
     expect(PelotonMuscleScoresSchema.parse([score('core', 3.25)])[0]?.score).toBe(3.25);
-    for (const scores of [[score('core', Infinity)], [score('core', NaN)], [score('core', 1), score('core', 2)], [{ ...score('core', 1), muscle_group: 'unknown' }]]) {
+    for (const scores of [[score('core', Infinity)], [score('core', NaN)], [score('core', -1)], [{ score: 1 }], [{ muscle_group: 42, score: 1 }]]) {
       expect(PelotonMuscleScoresSchema.safeParse(scores).success).toBe(false);
     }
   });
 
-  it.each(['seconds', 'date'])('honors Retry-After %s beyond the usual 60-second retry cap', async format => {
+  it('accepts minimal entries and unconstrained optional metadata', () => {
+    const entries = [
+      { muscle_group: 'core', score: 3.25 },
+      { muscle_group: 'glutes', score: 2, bucket: -99, percentage: 200, display_name: null },
+    ];
+    expect(PelotonMuscleScoresSchema.parse(entries)).toEqual(entries);
+  });
+
+  it('merges duplicate entries by summing scores before calculating shares', async () => {
+    list([workout('w1', 'duplicates')]);
+    details('duplicates', [
+      { muscle_group: 'core', score: 10 },
+      { muscle_group: 'core', score: 20 },
+      { muscle_group: 'glutes', score: 10 },
+    ]);
+    expect(await source().getMuscleData(30)).toEqual({
+      percentages: { core: 75, glutes: 25 }, source: 'peloton_class_data',
+      workoutsTotal: 1, workoutsWithData: 1,
+    });
+    expect((await getCachedRideMuscles('duplicates'))?.scores).toEqual([
+      { muscle_group: 'core', score: 30 }, { muscle_group: 'glutes', score: 10 },
+    ]);
+  });
+
+  it('keeps unknown scores in other and logs each unknown name only once across source instances', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    list([workout('w1', 'unknown'), workout('w2', 'unknown')]);
+    details('unknown', [score('core', 60), score('future_muscle_a', 10), score('future_muscle_b', 30)]);
+    const expected = {
+      percentages: { core: 60, other: 40 }, source: 'peloton_class_data',
+      workoutsTotal: 2, workoutsWithData: 2,
+    };
+    expect(await source().getMuscleData(30)).toEqual(expected);
+    expect(await source().getMuscleData(30)).toEqual(expected);
+    for (const key of ['future_muscle_a', 'future_muscle_b']) {
+      expect(log.mock.calls.filter(args => args.includes(key))).toEqual([[key]]);
+    }
+  });
+
+  it('also logs unknown keys in a successful zero-score response', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    list([workout('w1', 'zero-unknown')]);
+    details('zero-unknown', [score('future_zero_muscle', 0)]);
+    expect(await source().getMuscleData(30)).toEqual({
+      percentages: {}, source: 'peloton_class_data', workoutsTotal: 1, workoutsWithData: 0,
+    });
+    expect(log.mock.calls.filter(args => args.includes('future_zero_muscle'))).toEqual([['future_zero_muscle']]);
+  });
+
+  it('rejects overflowing duplicate sums', () => {
+    expect(PelotonMuscleScoresSchema.safeParse([
+      score('core', Number.MAX_VALUE), score('core', Number.MAX_VALUE),
+    ]).success).toBe(false);
+  });
+
+  it('throws at the 25-page limit instead of fetching page 26 or returning a partial window', async () => {
+    nock(PELOTON_API_URL).get('/api/me').reply(200, { username: 'fixture', id: 'user1' });
+    let pages = 0;
+    for (let page = 0; page < 25; page++) {
+      nock(PELOTON_API_URL).get('/api/user/user1/workouts').query(q => q['page'] === String(page))
+        .reply(() => {
+          pages++;
+          return [200, { data: [workout(`w${page}`, `r${page}`)], show_next: true }];
+        });
+    }
+    const result = source().getMuscleData(30);
+    await expect(result).rejects.toBeInstanceOf(PelotonApiError);
+    await expect(result).rejects.toThrow('Workout pagination exceeded 25 pages');
+    expect(pages).toBe(25);
+  });
+
+  it.each([
+    ['seconds', 30], ['seconds', 60], ['date', 30], ['date', 60],
+  ] as const)('honors Retry-After %s at %s seconds', async (format, seconds) => {
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(NOW);
     let retryScheduledAt = 0;
     const log = vi.spyOn(console, 'error').mockImplementation(message => {
       if (String(message).includes('[API] Rate limited.')) retryScheduledAt = Date.now();
     });
     const initial = Date.now();
-    const retryAfter = format === 'seconds' ? '120' : new Date(initial + 120_000).toUTCString();
-    const expectedDelay = format === 'seconds' ? 120_000 : Date.parse(retryAfter) - initial;
+    const retryAfter = format === 'seconds' ? String(seconds) : new Date(initial + seconds * 1000).toUTCString();
+    const expectedDelay = seconds * 1000;
     const scope = nock(PELOTON_API_URL).get('/api/ride/rate-limited/details')
       .reply(429, {}, { 'Retry-After': retryAfter })
       .get('/api/ride/rate-limited/details').reply(200, { ride: { muscle_group_score: [score('core', 1)] } });
     const result = client.getRideMuscleScores('rate-limited');
     await vi.waitFor(() => expect(log).toHaveBeenCalledWith(expect.stringContaining('[API] Rate limited.')));
-    await vi.advanceTimersByTimeAsync(60_000);
+    const retryAt = format === 'date' ? Date.parse(retryAfter) : retryScheduledAt + expectedDelay;
+    await vi.advanceTimersByTimeAsync(retryAt - Date.now() - 1);
     expect(scope.isDone()).toBe(false);
-    // Stop exactly at the retry rather than advancing through the next HTTP request's timeout.
-    await vi.advanceTimersByTimeAsync(retryScheduledAt + expectedDelay - Date.now());
+    await vi.advanceTimersByTimeAsync(1);
     expect(await result).toEqual([score('core', 1)]);
+  });
+
+  it.each([
+    ['seconds', 61, 'ride'], ['seconds', 120, 'ride'],
+    ['date', 61, 'ride'], ['date', 120, 'ride'],
+    ['seconds', 61, 'profile'], ['date', 61, 'profile'],
+  ] as const)('fails fast for Retry-After %s at %s seconds on %s', async (format, seconds, endpoint) => {
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+    vi.setSystemTime(NOW);
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const retryAfter = format === 'seconds' ? String(seconds) : new Date(NOW + seconds * 1000).toUTCString();
+    nock(PELOTON_API_URL).get(endpoint === 'ride' ? '/api/ride/rate-limited/details' : '/api/me')
+      .reply(429, {}, { 'Retry-After': retryAfter });
+    const result = endpoint === 'ride' ? client.getRideMuscleScores('rate-limited') : client.getUserProfile();
+    await expect(result).rejects.toBeInstanceOf(PelotonRateLimitError);
+    await expect(result).rejects.toMatchObject({ status: 429, retryAfterMs: seconds * 1000 });
+    expect(Date.now()).toBe(NOW);
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('[API] Rate limited. Retrying'));
   });
 });

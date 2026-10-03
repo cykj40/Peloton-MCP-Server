@@ -21,7 +21,12 @@ export function redactUserIdInPath(value: string): string {
   return value.replace(/(\/api\/user\/)[^/?#\s]+/g, '$1<redacted>');
 }
 
-/** Redact the user id segment of cache keys like workouts_<id>_<limit> and profile_<id>. */
+/** Hide user ids while retaining workout limit/page suffixes for cache diagnostics. */
 export function redactCacheKey(key: string): string {
-  return key.replace(/^(workouts_|profile_)([^_]+)/, (_match, prefix: string, id: string) => `${prefix}${redactId(id)}`);
+  if (/^workouts_.+_\d+_\d+$/.test(key)) {
+    return key.replace(/^workouts_.+_(\d+)_(\d+)$/, 'workouts_<redacted>_$1_$2');
+  }
+  return key
+    .replace(/^workouts_.+_(\d+)$/, 'workouts_<redacted>_$1')
+    .replace(/^profile_.+$/, 'profile_<redacted>');
 }
