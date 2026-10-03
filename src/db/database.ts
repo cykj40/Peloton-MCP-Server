@@ -1,4 +1,5 @@
 import { createClient, Client } from '@libsql/client';
+import { shortHash } from '../utils/redact.js';
 
 let client: Client | null = null;
 
@@ -18,7 +19,7 @@ export function getDatabase(): Client {
   }
 
   client = createClient({ url, ...(authToken ? { authToken } : {}) });
-  console.error('[DB] Connected to Turso database:', url);
+  console.error(`[DB] Connected to Turso database (urlHash: ${shortHash(url)})`);
   return client;
 }
 

@@ -24,6 +24,7 @@ import {
   PelotonAuthToken,
 } from './tokenStore.js';
 import { loginWithPassword, refreshOAuthTokenAndPersist, refreshToken } from './pelotonAuth.js';
+import { redactCacheKey, redactUserIdInPath } from '../utils/redact.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
@@ -109,14 +110,14 @@ async function makeApiRequest<T>(
   if (cacheKey) {
     const cachedValue = cache.get(cacheKey);
     if (cachedValue && cachedValue.expiry > Date.now()) {
-      console.error(`[Cache] Hit for: ${cacheKey}`);
+      console.error(`[Cache] Hit for: ${redactCacheKey(cacheKey)}`);
       // Safe cast because cache entries are only written by this function for the same cache key.
       return cachedValue.data as T;
     }
   }
 
   try {
-    console.error(`[API] ${config.method?.toUpperCase()} ${config.url}`);
+    console.error(`[API] ${config.method?.toUpperCase()} ${redactUserIdInPath(config.url ?? '')}`);
     const response = await axios<T>(config);
 
     if (cacheKey) {
@@ -124,7 +125,7 @@ async function makeApiRequest<T>(
         data: response.data,
         expiry: Date.now() + cacheTTL,
       });
-      console.error(`[Cache] Stored: ${cacheKey}`);
+      console.error(`[Cache] Stored: ${redactCacheKey(cacheKey)}`);
     }
 
     return response.data;

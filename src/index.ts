@@ -49,6 +49,7 @@ import {
   WorkoutStatsSchema,
 } from './schemas/index.js';
 import { isError } from './types/errors.js';
+import { redactId } from './utils/redact.js';
 import { ToolResponse } from './types/index.js';
 
 let pelotonClient: PelotonClient | null = null;
@@ -248,7 +249,7 @@ async function setupPelotonAuth(): Promise<void> {
     try {
       console.error('[Init] Proactive OAuth refresh for stored credentials...');
       token = await refreshOAuthTokenAndPersist(token);
-      console.error(`[Init] OAuth refresh successful for user ${token.user_id}`);
+      console.error(`[Init] OAuth refresh successful for user ${redactId(token.user_id)}`);
     } catch (error: unknown) {
       console.error('[Init] OAuth refresh failed:', isError(error) ? error.message : 'Unknown error');
       token = await loadToken();
@@ -260,10 +261,10 @@ async function setupPelotonAuth(): Promise<void> {
     const password = process.env.PELOTON_PASSWORD;
     if (username && password) {
       try {
-        console.error(`[Init] Auto-login with ${username}...`);
+        console.error('[Init] Auto-login with stored credentials (hasUsername: true)...');
         token = await loginWithPassword(username, password);
         await saveToken(token);
-        console.error(`[Init] Auto-login successful for user: ${username}`);
+        console.error('[Init] Auto-login successful (hasUsername: true)');
       } catch (error: unknown) {
         console.error('[Init] Auto-login failed:', isError(error) ? error.message : 'Unknown error');
       }
@@ -285,7 +286,7 @@ async function setupPelotonAuth(): Promise<void> {
 
   try {
     pelotonClient = new PelotonClient(token.access_token);
-    console.error(`[Init] PelotonClient created for user ${token.user_id} (expires ${new Date(token.expires_at).toISOString()})`);
+    console.error(`[Init] PelotonClient created for user ${redactId(token.user_id)} (expires ${new Date(token.expires_at).toISOString()})`);
     console.error(`[Init] Skipping live testConnection() — auth errors will surface on the first real API call`);
     console.error(`[Init] Registered ${allTools.length} tools (all active)`);
   } catch (error: unknown) {

@@ -14,6 +14,7 @@ import {
   loadToken,
   loadTokenIncludingExpired,
   saveToken,
+  saveTokenWithRetry,
   setRuntimeToken,
   type PelotonAuthToken,
 } from '../services/tokenStore.js';
@@ -126,6 +127,74 @@ describe('tokenStore', () => {
 
     expect(upsertAuthTokenMock).toHaveBeenCalledWith(token);
     await expect(loadTokenIncludingExpired()).resolves.toEqual(token);
+  });
+
+  describe('"Runtime token set" logging', () => {
+    const RUNTIME_LOG = '[Token] Runtime token set for user';
+
+    function makeToken(overrides: Partial<PelotonAuthToken> = {}): PelotonAuthToken {
+      return {
+        access_token: 'eyJ.once.token',
+        token_type: 'Bearer',
+        expires_at: Date.now() + 120_000,
+        user_id: 'abcdefgh-ijkl-mnop',
+        ...overrides,
+      };
+    }
+
+    function countRuntimeLogs(spy: ReturnType<typeof vi.spyOn>): number {
+      return spy.mock.calls.filter(([message]) => String(message).includes(RUNTIME_LOG)).length;
+    }
+
+    it('logs once when the same token object is set before saving', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const token = makeToken();
+
+        setRuntimeToken(token);
+        await saveTokenWithRetry(token);
+
+        const runtimeLogs = errorSpy.mock.calls.filter(([message]) =>
+          String(message).includes(RUNTIME_LOG)
+        );
+        expect(runtimeLogs).toHaveLength(1);
+        expect(String(runtimeLogs[0]?.[0])).toContain('abcdefgh...');
+        expect(String(runtimeLogs[0]?.[0])).not.toContain('abcdefgh-ijkl-mnop');
+      } finally {
+        errorSpy.mockRestore();
+        await clearToken();
+      }
+    });
+
+    it('logs once from saveToken when no runtime token was set beforehand', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        await clearToken();
+        errorSpy.mockClear();
+
+        await saveToken(makeToken());
+
+        expect(countRuntimeLogs(errorSpy)).toBe(1);
+      } finally {
+        errorSpy.mockRestore();
+        await clearToken();
+      }
+    });
+
+    it('logs twice for an equal-valued but distinct token object (reference equality)', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      try {
+        const token = makeToken();
+
+        setRuntimeToken(token);
+        await saveToken({ ...token });
+
+        expect(countRuntimeLogs(errorSpy)).toBe(2);
+      } finally {
+        errorSpy.mockRestore();
+        await clearToken();
+      }
+    });
   });
 
   it('clears runtime and database token state', async () => {

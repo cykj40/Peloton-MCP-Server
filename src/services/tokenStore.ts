@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { PROACTIVE_EXPIRY_BUFFER_MS } from '../constants.js';
 import { deleteStoredAuthToken, getStoredAuthToken, upsertAuthToken } from '../db/queries.js';
 import { CookieStoreError } from '../types/errors.js';
+import { redactId } from '../utils/redact.js';
 
 export { PROACTIVE_EXPIRY_BUFFER_MS };
 
@@ -33,7 +34,7 @@ let pendingPersistToken: PelotonAuthToken | null = null;
 export function setRuntimeToken(token: PelotonAuthToken): void {
   runtimeToken = token;
   console.error(
-    `[Token] Runtime token set for user ${token.user_id} (expires ${new Date(token.expires_at).toISOString()})`
+    `[Token] Runtime token set for user ${redactId(token.user_id)} (expires ${new Date(token.expires_at).toISOString()})`
   );
 }
 
@@ -157,9 +158,14 @@ export async function saveToken(token: PelotonAuthToken): Promise<void> {
 
   try {
     await upsertAuthToken(parsedToken);
-    setRuntimeToken(parsedToken);
+    // Callers (admin /update-peloton-token, refresh, pending-persist retry) often set the runtime
+    // token before persisting; skip the redundant call so the "Runtime token set" line logs once.
+    // Intentionally reference equality, not value equality: do not compare fields here.
+    if (runtimeToken !== parsedToken) {
+      setRuntimeToken(parsedToken);
+    }
     console.error(
-      `[Token] Saved token for user ${parsedToken.user_id} (expires ${new Date(parsedToken.expires_at).toISOString()})`
+      `[Token] Saved token for user ${redactId(parsedToken.user_id)} (expires ${new Date(parsedToken.expires_at).toISOString()})`
     );
   } catch (error: unknown) {
     throw new CookieStoreError('Failed to save token to database', error);

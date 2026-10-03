@@ -31,8 +31,6 @@ function loadEnvFile(path) {
 }
 
 loadEnvFile(resolve(process.cwd(), '.env'))
-loadEnvFile(resolve(process.cwd(), '../t1pilot/.env'))
-loadEnvFile(resolve(process.cwd(), '../t1pilot/apps/web/.env.local'))
 
 const username = process.env.PELOTON_USERNAME
 const password = process.env.PELOTON_PASSWORD
