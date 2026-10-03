@@ -15,6 +15,7 @@ export interface PelotonWorkout {
   device_type?: string;
   status?: string;
   ride?: {
+    id?: string;
     title: string;
     duration: number;
     instructor?: {

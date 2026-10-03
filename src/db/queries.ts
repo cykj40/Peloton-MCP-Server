@@ -19,6 +19,7 @@ function parseWorkout(rawData: string): PelotonWorkout | null {
     const workout = parsedWorkout.data;
     const ride = workout.ride
       ? {
+          ...(workout.ride.id !== undefined ? { id: workout.ride.id } : {}),
           title: workout.ride.title,
           duration: workout.ride.duration,
           ...(workout.ride.instructor ? { instructor: workout.ride.instructor } : {}),

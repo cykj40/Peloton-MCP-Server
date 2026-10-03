@@ -25,6 +25,8 @@ import {
 } from './tokenStore.js';
 import { loginWithPassword, refreshOAuthTokenAndPersist, refreshToken } from './pelotonAuth.js';
 import { redactCacheKey, redactUserIdInPath } from '../utils/redact.js';
+import { RideMuscleDetailsSchema } from '../schemas/muscleData.js';
+import type { PelotonMuscleScore } from '../types/muscleData.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
@@ -74,6 +76,7 @@ function mapWorkout(rawWorkout: PelotonWorkoutResponse): PelotonWorkout {
   const instructor = rawWorkout.ride?.instructor ?? rawWorkout.instructor;
   const ride = rawWorkout.ride
     ? {
+        ...(rawWorkout.ride.id !== undefined ? { id: rawWorkout.ride.id } : {}),
         title: rawWorkout.ride.title ?? rawWorkout.name ?? 'Untitled Workout',
         duration: normalizedDuration,
         ...(rawWorkout.ride.instructor ? { instructor: rawWorkout.ride.instructor } : {}),
@@ -143,9 +146,9 @@ async function makeApiRequest<T>(
       );
 
       if (retries < MAX_RETRIES) {
-        const retryDelay = Math.min(
-          Math.max(retryAfterMs, INITIAL_RETRY_DELAY) * Math.pow(2, retries),
-          MAX_RETRY_DELAY
+        const retryDelay = Math.max(
+          retryAfterMs,
+          Math.min(INITIAL_RETRY_DELAY * Math.pow(2, retries), MAX_RETRY_DELAY)
         );
 
         console.error(
@@ -153,7 +156,7 @@ async function makeApiRequest<T>(
         );
 
         await new Promise((resolve) => setTimeout(resolve, retryDelay));
-        return makeApiRequest<T>(config, retries + 1, cacheKey, cacheTTL);
+        return makeApiRequest<T>(config, retries + 1, cacheKey, cacheTTL, retriedOnAuth);
       }
 
       throw new PelotonRateLimitError(endpoint, retryAfterMs);
@@ -428,6 +431,10 @@ export class PelotonClient {
    * Get recent workouts.
    */
   async getRecentWorkouts(limit = 10): Promise<PelotonWorkout[]> {
+    return (await this.getWorkoutsPage(limit, 0)).data;
+  }
+
+  private async getWorkoutsPage(limit: number, page: number) {
     if (!this.userId) {
       const connectionTest = await this.testConnection();
       if (!connectionTest.success || !connectionTest.userId) {
@@ -436,13 +443,13 @@ export class PelotonClient {
       this.userId = connectionTest.userId;
     }
 
-    const cacheKey = `workouts_${this.userId}_${limit}`;
+    const cacheKey = `workouts_${this.userId}_${limit}_${page}`;
     const config: AxiosRequestConfig = {
       method: 'GET',
       url: `${PELOTON_API_URL}/api/user/${this.userId}/workouts`,
       params: {
         limit,
-        page: 0,
+        page,
         joins: 'ride,ride.instructor',
         sort_by: '-created',
       },
@@ -473,7 +480,51 @@ export class PelotonClient {
       }
     }
 
-    return workouts;
+    return { ...parsed.data, data: workouts };
+  }
+
+  /** Fetch a complete window, rather than truncating active users at a fixed workout limit. */
+  async getWorkoutsInWindow(start: Date, end: Date): Promise<PelotonWorkout[]> {
+    const startSeconds = start.getTime() / 1000;
+    const endSeconds = end.getTime() / 1000;
+    if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || startSeconds > endSeconds) {
+      throw new RangeError('Invalid workout window');
+    }
+    const workouts = new Map<string, PelotonWorkout>();
+    for (let page = 0; ; page += 1) {
+      const response = await this.getWorkoutsPage(100, page);
+      let added = 0;
+      for (const workout of response.data) {
+        if (!workouts.has(workout.id)) added += 1;
+        workouts.set(workout.id, workout);
+      }
+      if (response.data.length === 0) break;
+      if (added === 0) throw new PelotonApiError('Workout pagination made no progress', 200, '/api/user/<redacted>/workouts');
+      if (
+        response.data.every(workout => workout.created_at < startSeconds) ||
+        response.show_next === false ||
+        (response.page_count !== undefined && page + 1 >= response.page_count) ||
+        (response.total !== undefined && workouts.size >= response.total)
+      ) break;
+      if (response.show_next === undefined && response.page_count === undefined &&
+          response.total === undefined && response.data.length < 100) break;
+    }
+    return [...workouts.values()].filter(w => w.created_at >= startSeconds && w.created_at <= endSeconds);
+  }
+
+  /** Raw class scores; the muscle data source owns the longer-lived per-ride cache. */
+  async getRideMuscleScores(rideId: string): Promise<PelotonMuscleScore[]> {
+    if (!rideId.trim()) throw new TypeError('rideId must not be empty');
+    const endpoint = `/api/ride/${encodeURIComponent(rideId)}/details`;
+    const response = await makeApiRequest<unknown>({
+      method: 'GET',
+      url: `${PELOTON_API_URL}${endpoint}`,
+      headers: await this.getAuthHeaders(),
+      timeout: 30_000,
+    });
+    const parsed = RideMuscleDetailsSchema.safeParse(response);
+    if (!parsed.success) throw new PelotonApiError('Invalid ride muscle data', 200, '/api/ride/<redacted>/details');
+    return parsed.data.ride.muscle_group_score ?? [];
   }
 
   /**

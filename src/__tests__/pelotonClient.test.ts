@@ -105,6 +105,7 @@ describe('PelotonClient', () => {
             created_at: 1_700_000_000,
             calories: 320,
             ride: {
+              id: 'ride-1',
               title: 'Ride Title',
               duration: 1800,
               instructor: { name: 'Alex', id: 'i1' },
@@ -118,8 +119,10 @@ describe('PelotonClient', () => {
 
     expect(workouts).toHaveLength(1);
     expect(workouts[0]?.name).toBe('Ride Title');
+    expect(workouts[0]?.ride?.id).toBe('ride-1');
     expect(await getWorkoutCount()).toBe(1);
     expect((await getWorkoutById('workout-1'))?.instructor?.name).toBe('Alex');
+    expect((await getWorkoutById('workout-1'))?.ride?.id).toBe('ride-1');
   });
 
   it('getRecentWorkouts sends peloton_session_id cookie when available', async () => {

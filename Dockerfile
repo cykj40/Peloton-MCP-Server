@@ -10,6 +10,9 @@ RUN npm run build
 
 FROM node:20-alpine
 
+# Fonts for resvg text rendering (alpine ships none; text is silently dropped without them)
+RUN apk add --no-cache font-dejavu
+
 WORKDIR /app
 
 COPY package*.json ./

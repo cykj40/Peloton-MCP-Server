@@ -23,6 +23,7 @@ export const PelotonWorkoutResponseSchema = z.object({
   calories: z.number().optional(),
   status: z.string().optional(),
   ride: z.object({
+    id: z.string().min(1).optional(),
     title: z.string().optional(),
     duration: z.number().optional().default(0),
     instructor: PelotonInstructorSchema.optional(),
@@ -35,4 +36,6 @@ export const PelotonWorkoutResponseSchema = z.object({
 export const PelotonWorkoutsListResponseSchema = z.object({
   data: z.array(PelotonWorkoutResponseSchema),
   total: z.number().optional(),
+  page_count: z.number().int().nonnegative().optional(),
+  show_next: z.boolean().optional(),
 });

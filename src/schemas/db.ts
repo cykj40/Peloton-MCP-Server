@@ -22,6 +22,7 @@ export const StoredPelotonWorkoutSchema = z.object({
   status: z.string().optional(),
   ride: z
     .object({
+      id: z.string().min(1).optional(),
       title: z.string(),
       duration: z.number(),
       instructor: z

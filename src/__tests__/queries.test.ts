@@ -34,6 +34,13 @@ describe('db queries', () => {
     expect((await getWorkoutById('w1'))?.name).toBe('New Name');
   });
 
+  it('preserves ride ids and still reads legacy workouts without one', async () => {
+    await upsertWorkout(makeMockWorkout({ id: 'new', ride: { id: 'class-1', title: 'Ride', duration: 1800 } }));
+    await upsertWorkout(makeMockWorkout({ id: 'legacy' }));
+    expect((await getWorkoutById('new'))?.ride?.id).toBe('class-1');
+    expect((await getWorkoutById('legacy'))?.ride).toEqual({ title: '30 Min HIIT Ride', duration: 1800 });
+  });
+
   it('getWorkoutsByDateRange returns workouts in range', async () => {
     const base = 1_700_000_000;
     for (let i = 0; i < 5; i += 1) {

@@ -54,6 +54,15 @@ export async function runMigrations(): Promise<void> {
     ON muscle_snapshots(period)
   `);
 
+  // Class metadata is shared by all workouts of the same ride. fetched_at is epoch milliseconds.
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS ride_muscle_cache (
+      ride_id TEXT PRIMARY KEY,
+      muscle_group_score TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL
+    )
+  `);
+
   // Create glucose_correlations table
   await db.execute(`
     CREATE TABLE IF NOT EXISTS glucose_correlations (
