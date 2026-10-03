@@ -10,6 +10,7 @@ export function pelotonAuthLoginUrl(): string {
 
 /** Auth0 settings aligned with peloton-to-garmin PelotonApiSettings defaults. */
 export const PELOTON_AUTH_DOMAIN = 'auth.onepeloton.com';
+// Peloton's public web client id, not a private secret; never commit a client secret alongside it.
 export const PELOTON_AUTH_CLIENT_ID = 'WVoJxVDdPoFx4RNewvvg6ch2mZ7bwnsM';
 export const PELOTON_AUTH_TOKEN_URL = `https://${PELOTON_AUTH_DOMAIN}/oauth/token`;
 export const PELOTON_TOKEN_EXPIRES_IN_SECONDS = 172800;

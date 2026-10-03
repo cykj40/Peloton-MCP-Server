@@ -19,3 +19,4 @@ coverage/
 *.zip
 
 .claude/settings.local.json
+coverage-report.txt

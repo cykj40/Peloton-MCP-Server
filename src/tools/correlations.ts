@@ -91,7 +91,7 @@ export const correlationTools = [
   {
     name: 'peloton_sync_workouts',
     description:
-      'Force sync latest workouts from Peloton API to local database. Run this periodically to keep workout data fresh for correlation analysis.',
+      'Force sync latest workouts from Peloton API to the database. Run this periodically to keep workout data fresh for correlation analysis.',
     inputSchema: {
       type: 'object',
       properties: {

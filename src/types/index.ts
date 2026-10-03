@@ -96,9 +96,18 @@ export interface ToolTextContent {
   text: string;
 }
 
+/** MCP image content block: `data` is base64 without a data: URI prefix. */
+export interface ToolImageContent {
+  type: 'image';
+  data: string;
+  mimeType: string;
+}
+
+export type ToolContent = ToolTextContent | ToolImageContent;
+
 export interface ToolResponse {
   [key: string]: unknown;
-  content: ToolTextContent[];
+  content: ToolContent[];
   structuredContent?: unknown;
 }
 

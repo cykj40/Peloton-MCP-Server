@@ -51,6 +51,7 @@ import {
 import { isError } from './types/errors.js';
 import { redactId } from './utils/redact.js';
 import { ToolResponse } from './types/index.js';
+import { imageProbeTool, handleImageProbe } from './tools/imageProbe.js'; // TEMP: step-1 risk gate
 
 let pelotonClient: PelotonClient | null = null;
 let authFailureReason: string | null = null;
@@ -76,7 +77,7 @@ const refreshTokenTool = {
   },
 };
 
-const allTools = [...profileTools, ...workoutTools, ...analyticsTools, ...correlationTools, refreshTokenTool];
+const allTools = [...profileTools, ...workoutTools, ...analyticsTools, ...correlationTools, refreshTokenTool, imageProbeTool];
 type ToolName = ProfileToolName | WorkoutToolName | AnalyticsToolName | CorrelationToolName;
 type ToolHandler = (args: unknown, client: PelotonClient) => Promise<ToolResponse>;
 
@@ -139,6 +140,10 @@ function createMcpServer(): Server {
 
   srv.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+
+  if (name === 'peloton_image_probe') {
+    return handleImageProbe(); // TEMP: step-1 risk gate
+  }
 
   if (name === 'peloton_refresh_token') {
     const parsed = args as { token?: string; refresh_token?: string };
