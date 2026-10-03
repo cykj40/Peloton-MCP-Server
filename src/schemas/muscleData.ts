@@ -20,3 +20,13 @@ export const RideMuscleDetailsSchema = z.object({
     muscle_group_score: PelotonMuscleScoresSchema.nullish(),
   }),
 });
+
+/** Strip the workout payload and all unrequested metadata from the account-level response. */
+export const BodyActivityResponseSchema = z.object({
+  muscle_group_score: z.array(z.object({
+    muscle_group: z.string(),
+    score: z.number().finite().nonnegative(),
+    percentage: z.number().finite().min(0).max(100),
+    bucket: z.number().finite().optional(),
+  })),
+});

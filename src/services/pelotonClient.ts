@@ -25,8 +25,8 @@ import {
 } from './tokenStore.js';
 import { loginWithPassword, refreshOAuthTokenAndPersist, refreshToken } from './pelotonAuth.js';
 import { redactCacheKey, redactUserIdInPath } from '../utils/redact.js';
-import { RideMuscleDetailsSchema } from '../schemas/muscleData.js';
-import type { PelotonMuscleScore } from '../types/muscleData.js';
+import { BodyActivityResponseSchema, RideMuscleDetailsSchema } from '../schemas/muscleData.js';
+import type { BodyActivityData, PelotonMuscleScore } from '../types/muscleData.js';
 
 type PelotonWorkoutResponse = (typeof PelotonWorkoutResponseSchema)['_output'];
 
@@ -518,6 +518,51 @@ export class PelotonClient {
           response.total === undefined && response.data.length < 100) break;
     }
     return [...workouts.values()].filter(w => w.created_at >= startSeconds && w.created_at <= endSeconds);
+  }
+
+  /** Account-level Body activity. Never persist or cache the response's workout list. */
+  async getBodyActivity(start: Date, end: Date): Promise<BodyActivityData> {
+    const startMs = start.getTime();
+    const endMs = end.getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs > endMs) {
+      throw new RangeError('Invalid body activity window');
+    }
+    // Resolve the account locally to keep this to one workouts GET, without an /api/me lookup.
+    const token = await this.getActiveToken();
+    const userId = this.userId ?? token.user_id;
+    if (!userId || userId === 'unknown') {
+      throw new PelotonAuthError('A Peloton user ID is required for body activity');
+    }
+    const endpoint = `/api/user/${encodeURIComponent(userId)}/workouts`;
+    const response = await makeApiRequest<(typeof BodyActivityResponseSchema)['_output'] | null>({
+      method: 'GET',
+      url: `${PELOTON_API_URL}${endpoint}`,
+      params: {
+        from: start.toISOString(), to: end.toISOString(),
+        stats_from: start.toISOString(), stats_to: end.toISOString(),
+        joins: 'ride',
+      },
+      headers: await this.getAuthHeaders(),
+      timeout: 30_000,
+      // Project before makeApiRequest can retain data or include an HTTP error body in an error.
+      // This also strips every field except the four supported muscle entry fields.
+      transformResponse: [(body: unknown) => {
+        try {
+          const parsed = BodyActivityResponseSchema.safeParse(typeof body === 'string' ? JSON.parse(body) : body);
+          return parsed.success ? parsed.data : null;
+        } catch {
+          return null;
+        }
+      }],
+    });
+    if (!response) throw new PelotonApiError('Invalid body activity response', 200, '/api/user/<redacted>/workouts');
+    const muscles = response.muscle_group_score;
+    const topSix = [...muscles].sort((a, b) => b.score - a.score || a.muscle_group.localeCompare(b.muscle_group)).slice(0, 6);
+    return {
+      percentages: Object.fromEntries(muscles.map(muscle => [muscle.muscle_group, muscle.percentage])),
+      topSix,
+      other: 100 - topSix.reduce((sum, muscle) => sum + muscle.percentage, 0),
+    };
   }
 
   /** Raw class scores; the muscle data source owns the longer-lived per-ride cache. */

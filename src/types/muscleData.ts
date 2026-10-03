@@ -33,3 +33,17 @@ export interface RideMuscleCacheEntry {
   scores: PelotonMuscleScore[];
   fetchedAt: number;
 }
+
+/** Account-level Body activity metadata; percentages come directly from Peloton. */
+export interface BodyActivityMuscleScore {
+  muscle_group: string;
+  score: number;
+  percentage: number;
+  bucket?: number | undefined;
+}
+
+export interface BodyActivityData {
+  percentages: Record<string, number>;
+  topSix: BodyActivityMuscleScore[];
+  other: number;
+}

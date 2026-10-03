@@ -249,7 +249,7 @@ describe('parity with peloton_muscle_activity', () => {
 
 describe('renderMuscleChartPng', () => {
   const cases: Array<[string, Record<string, number>, number]> = [
-    ['typical mixed data', { quads: 14, hamstrings: 15, core: 14, chest: 4, upper_back: 2 }, 6],
+    ['typical mixed data', { quads: 14, hamstrings: 15, core: 14, chest: 4, mid_back: 2 }, 6],
     ['no workouts', {}, 0],
     ['workouts with no muscle data', {}, 3],
     ['100% in one region', { quads: 100 }, 1],
