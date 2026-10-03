@@ -1,11 +1,8 @@
 import type { MuscleImpactData } from '../types/index.js';
+import type { PelotonMuscleKey } from '../types/muscleData.js';
+import { impactToPelotonPercentages } from '../services/musclePercentages.js';
 
-/**
- * Data-to-state logic for the muscle chart. No drawing code lives here.
- *
- * Input keys are the raw snake_case keys produced by calculateMuscleImpact
- * (e.g. "lower_back"), not the display names returned by peloton_muscle_activity.
- */
+/** Pure Peloton-key-to-region data and classification; no drawing geometry lives here. */
 
 export type MuscleState = 'worked' | 'neutral' | 'attention';
 
@@ -13,6 +10,8 @@ export type RegionId =
   | 'shoulders'
   | 'chest'
   | 'biceps'
+  | 'forearms'
+  | 'hips'
   | 'core'
   | 'quads'
   | 'upper_back'
@@ -26,22 +25,24 @@ export interface RegionDef {
   id: RegionId;
   label: string;
   /** Raw muscle keys summed into this region; keys with no data count as 0%. */
-  sourceKeys: readonly string[];
+  sourceKeys: readonly PelotonMuscleKey[];
 }
 
-/** Every one of the 13 raw keys the analytics table can produce maps to exactly one region. */
+/** All 16 Peloton muscles map exactly once; synthetic `other` is text-only. */
 export const REGIONS: readonly RegionDef[] = [
   { id: 'shoulders', label: 'Shoulders', sourceKeys: ['shoulders'] },
   { id: 'chest', label: 'Chest', sourceKeys: ['chest'] },
   { id: 'biceps', label: 'Biceps', sourceKeys: ['biceps'] },
-  { id: 'core', label: 'Core', sourceKeys: ['core', 'obliques'] },
-  { id: 'quads', label: 'Quads', sourceKeys: ['quadriceps'] },
-  { id: 'upper_back', label: 'Upper Back', sourceKeys: ['upper_back', 'back'] },
   { id: 'triceps', label: 'Triceps', sourceKeys: ['triceps'] },
-  { id: 'lower_back', label: 'Lower Back', sourceKeys: ['lower_back'] },
+  { id: 'forearms', label: 'Forearms', sourceKeys: ['forearms'] },
+  { id: 'core', label: 'Core', sourceKeys: ['core', 'obliques'] },
+  { id: 'hips', label: 'Hips', sourceKeys: ['hips'] },
   { id: 'glutes', label: 'Glutes', sourceKeys: ['glutes'] },
+  { id: 'quads', label: 'Quads', sourceKeys: ['quads'] },
   { id: 'hamstrings', label: 'Hamstrings', sourceKeys: ['hamstrings'] },
   { id: 'calves', label: 'Calves', sourceKeys: ['calves'] },
+  { id: 'upper_back', label: 'Upper Back', sourceKeys: ['lats', 'mid_back', 'traps'] },
+  { id: 'lower_back', label: 'Lower Back', sourceKeys: ['low_back'] },
 ];
 
 /**
@@ -135,25 +136,7 @@ export function getEmptyReason(workoutCount: number, results: readonly RegionRes
   return isEmptyChartData(results) ? 'no_muscle_data' : null;
 }
 
-// Keys with no body region; same exclusions peloton_muscle_activity applies.
-const NON_VISUAL_KEYS: ReadonlySet<string> = new Set(['heart', 'mind', 'lungs', 'full_body']);
-
-/**
- * Turns calculateMuscleImpact output into unrounded percentages by raw key. The denominator
- * is the total score across all keys, matching how peloton_muscle_activity computes its
- * numbers, so the chart and that tool agree. Returns {} when there is no score.
- */
+/** Convert the legacy estimate to Peloton keys without changing its denominator. */
 export function impactToPercentages(impact: MuscleImpactData): Record<string, number> {
-  const totalScore = Object.values(impact).reduce((sum, entry) => sum + entry.score, 0);
-  if (totalScore <= 0) {
-    return {};
-  }
-
-  const percentages: Record<string, number> = {};
-  for (const [key, entry] of Object.entries(impact)) {
-    if (!NON_VISUAL_KEYS.has(key)) {
-      percentages[key] = (entry.score / totalScore) * 100;
-    }
-  }
-  return percentages;
+  return impactToPelotonPercentages(impact);
 }

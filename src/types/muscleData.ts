@@ -22,9 +22,11 @@ export interface MuscleData {
   workoutsWithData: number;
 }
 
+export type MuscleWeighting = 'raw' | 'per_minute';
+
 export interface MuscleDataSource {
   /** Inclusive rolling window ending now; days must be an integer from 1 to 90. */
-  getMuscleData(days: number): Promise<MuscleData>;
+  getMuscleData(days: number, weighting?: MuscleWeighting): Promise<MuscleData>;
 }
 
 export interface RideMuscleCacheEntry {

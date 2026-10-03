@@ -68,18 +68,18 @@ describe('Peloton muscle data source', () => {
     expect((await getCachedRideMuscles('a'))?.scores).toEqual([score('glutes', 30), score('quads', 10)]);
   });
 
-  it('keeps partial successes without filling failures with estimates', async () => {
+  it.each(['raw', 'per_minute'] as const)('keeps partial successes without filling failures with estimates (%s)', async weighting => {
     list([workout('w1', 'good'), workout('w2', 'bad')]);
     details('good', [score('hips', 10)]);
     nock(PELOTON_API_URL).get('/api/ride/bad/details').reply(500, { message: 'unavailable' });
-    expect(await source().getMuscleData(30)).toEqual({ percentages: { hips: 100 }, source: 'peloton_class_data', workoutsTotal: 2, workoutsWithData: 1 });
+    expect(await source().getMuscleData(30, weighting)).toEqual({ percentages: { hips: 100 }, source: 'peloton_class_data', workoutsTotal: 2, workoutsWithData: 1 });
     expect(await getCachedRideMuscles('bad')).toBeNull();
   });
 
-  it('falls back to the existing estimate, with Peloton key aliases, only when every lookup fails', async () => {
+  it.each(['raw', 'per_minute'] as const)('falls back to the existing estimate, with Peloton key aliases, only when every lookup fails (%s)', async weighting => {
     list([workout('w1', 'bad')]);
     nock(PELOTON_API_URL).get('/api/ride/bad/details').reply(503);
-    const result = await source().getMuscleData(30);
+    const result = await source().getMuscleData(30, weighting);
     expect(result.source).toBe('estimate');
     expect(result.workoutsWithData).toBe(0);
     expect(result.workoutsTotal).toBe(1);
@@ -89,16 +89,16 @@ describe('Peloton muscle data source', () => {
     expect(result.percentages).not.toHaveProperty('quadriceps');
   });
 
-  it('returns genuine empty data when empty responses succeed, even if another fetch fails', async () => {
+  it.each(['raw', 'per_minute'] as const)('returns genuine empty data when empty responses succeed, even if another fetch fails (%s)', async weighting => {
     list([workout('w1', 'empty'), workout('w2', 'bad')]);
     details('empty', null);
     nock(PELOTON_API_URL).get('/api/ride/bad/details').reply(500);
-    expect(await source().getMuscleData(30)).toEqual({ percentages: {}, source: 'peloton_class_data', workoutsTotal: 2, workoutsWithData: 0 });
+    expect(await source().getMuscleData(30, weighting)).toEqual({ percentages: {}, source: 'peloton_class_data', workoutsTotal: 2, workoutsWithData: 0 });
   });
 
-  it('returns an empty result without detail calls for an empty window', async () => {
+  it.each(['raw', 'per_minute'] as const)('returns an empty result without detail calls for an empty window (%s)', async weighting => {
     list([]);
-    expect(await source().getMuscleData(1)).toEqual({ percentages: {}, source: 'peloton_class_data', workoutsTotal: 0, workoutsWithData: 0 });
+    expect(await source().getMuscleData(1, weighting)).toEqual({ percentages: {}, source: 'peloton_class_data', workoutsTotal: 0, workoutsWithData: 0 });
   });
 
   it('uses the estimate for legacy workouts with no ride ids', async () => {
@@ -251,7 +251,7 @@ describe('Peloton muscle data source', () => {
     expect(await source().getMuscleData(30)).toEqual(expected);
     expect(await source().getMuscleData(30)).toEqual(expected);
     for (const key of ['future_muscle_a', 'future_muscle_b']) {
-      expect(log.mock.calls.filter(args => args.includes(key))).toEqual([[key]]);
+      expect(log.mock.calls.filter(args => args.includes(`[Muscles] Unknown muscle key: ${key}`))).toEqual([[`[Muscles] Unknown muscle key: ${key}`]]);
     }
   });
 
@@ -262,7 +262,68 @@ describe('Peloton muscle data source', () => {
     expect(await source().getMuscleData(30)).toEqual({
       percentages: {}, source: 'peloton_class_data', workoutsTotal: 1, workoutsWithData: 0,
     });
-    expect(log.mock.calls.filter(args => args.includes('future_zero_muscle'))).toEqual([['future_zero_muscle']]);
+    expect(log.mock.calls.filter(args => args.includes('[Muscles] Unknown muscle key: future_zero_muscle'))).toEqual([['[Muscles] Unknown muscle key: future_zero_muscle']]);
+  });
+
+  it('switches from raw class scores to duration-weighted class shares', async () => {
+    const cycling = { ...workout('cycle', 'cycle-30'), duration: 1800, fitness_discipline: 'cycling',
+      ride: { id: 'cycle-30', title: '30 min Ride', duration: 1800 } };
+    const strength = { ...workout('strength', 'strength-60'), duration: 3600, fitness_discipline: 'strength',
+      ride: { id: 'strength-60', title: '60 min Strength', duration: 3600 } };
+    list([cycling, strength]);
+    details('cycle-30', [score('glutes', 9000), score('quads', 1000)]);
+    details('strength-60', [score('core', 900), score('glutes', 100)]);
+    const dataSource = source();
+    const raw = await dataSource.getMuscleData(30);
+    expect(await dataSource.getMuscleData(30, 'raw')).toEqual(raw);
+    const perMinute = await dataSource.getMuscleData(30, 'per_minute');
+    for (const data of [raw, perMinute]) {
+      expect(data.source).toBe('peloton_class_data');
+      expect(data.workoutsTotal).toBe(2);
+      expect(data.workoutsWithData).toBe(2);
+      expect(Object.values(data.percentages).reduce((sum, value) => sum + value, 0)).toBeCloseTo(100);
+    }
+    expect(raw.percentages.glutes).toBeCloseTo(100 * 9100 / 11000);
+    expect(raw.percentages.quads).toBeCloseTo(100 * 1000 / 11000);
+    expect(raw.percentages.core).toBeCloseTo(100 * 900 / 11000);
+    expect(perMinute.percentages.glutes).toBeCloseTo(100 * 33 / 90);
+    expect(perMinute.percentages.quads).toBeCloseTo(100 * 3 / 90);
+    expect(perMinute.percentages.core).toBeCloseTo(60);
+  });
+
+  it('keeps other in the per-minute denominator and excludes missing class data', async () => {
+    list([workout('w1', 'mixed'), workout('w2', 'missing')]);
+    details('mixed', [score('core', 1), score('other', 3)]);
+    details('missing', []);
+    expect(await source().getMuscleData(30, 'per_minute')).toEqual({
+      percentages: { core: 25, other: 75 }, source: 'peloton_class_data',
+      workoutsTotal: 2, workoutsWithData: 1,
+    });
+  });
+
+  it('keeps coverage unchanged for a zero-duration scored workout without inventing minutes', async () => {
+    list([{ ...workout('w1', 'zero-duration'), duration: 0, ride: { id: 'zero-duration', title: 'Class', duration: 0 } }]);
+    details('zero-duration', [score('core', 10)]);
+    expect(await source().getMuscleData(30, 'per_minute')).toEqual({
+      percentages: {}, source: 'peloton_class_data', workoutsTotal: 1, workoutsWithData: 1,
+    });
+  });
+
+  it('rejects unsupported weighting before any API request', async () => {
+    // @ts-expect-error exercise untyped callers
+    await expect(source().getMuscleData(30, 'invalid')).rejects.toThrow(RangeError);
+  });
+
+  it('sanitizes and truncates unknown muscle names before logging once', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const name = 'future_é\n\r\t\0\u001b\u2028\u2029\u200b' + 'x'.repeat(60);
+    list([workout('w1', 'unsafe-name')]);
+    details('unsafe-name', [score(name, 10)]);
+    const dataSource = source();
+    await dataSource.getMuscleData(30);
+    await dataSource.getMuscleData(30);
+    const warnings = log.mock.calls.filter(args => String(args[0]).startsWith('[Muscles]'));
+    expect(warnings).toEqual([['[Muscles] Unknown muscle key: future_é' + 'x'.repeat(32)]]);
   });
 
   it('rejects overflowing duplicate sums', () => {

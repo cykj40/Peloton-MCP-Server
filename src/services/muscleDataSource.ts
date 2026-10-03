@@ -1,9 +1,9 @@
 import { calculateMuscleImpact } from './analytics.js';
+import { impactToPelotonPercentages } from './musclePercentages.js';
 import type { PelotonClient } from './pelotonClient.js';
 import { RideMuscleCache, rideMuscleCache } from './rideMuscleCache.js';
 import { PELOTON_MUSCLE_KEYS } from '../types/muscleData.js';
-import type { MuscleData, MuscleDataSource, MusclePercentages, PelotonMuscleKey, PelotonMuscleScore } from '../types/muscleData.js';
-import type { PelotonWorkout } from '../types/index.js';
+import type { MuscleData, MuscleDataSource, MusclePercentages, MuscleWeighting, PelotonMuscleKey, PelotonMuscleScore } from '../types/muscleData.js';
 
 type MuscleClient = Pick<PelotonClient, 'getWorkoutsInWindow' | 'getRideMuscleScores'>;
 
@@ -14,30 +14,12 @@ function muscleKey(key: string): PelotonMuscleKey {
   if (known) return known;
   if (!loggedUnknownMuscles.has(key)) {
     loggedUnknownMuscles.add(key);
-    console.error(key);
+    const name = [...key.replace(/[\p{C}\p{Zl}\p{Zp}]/gu, '')].slice(0, 40).join('');
+    console.error(`[Muscles] Unknown muscle key: ${name}`);
   }
   return 'other';
 }
 
-
-/** Compatibility aliases for the legacy estimate, not a chart-region mapping.
- * Its broad back/upper_back categories are approximated as mid_back. No score is invented.
- */
-const ESTIMATE_ALIASES: Readonly<Record<string, PelotonMuscleKey>> = {
-  quadriceps: 'quads', lower_back: 'low_back', back: 'mid_back', upper_back: 'mid_back',
-};
-
-function estimatePercentages(workouts: PelotonWorkout[]): MusclePercentages {
-  const impact = calculateMuscleImpact(workouts);
-  const total = Object.values(impact).reduce((sum, entry) => sum + entry.score, 0);
-  const percentages: MusclePercentages = {};
-  if (total <= 0) return percentages;
-  for (const [key, entry] of Object.entries(impact)) {
-    const muscle = ESTIMATE_ALIASES[key] ?? PELOTON_MUSCLE_KEYS.find(k => k === key);
-    if (muscle) percentages[muscle] = (percentages[muscle] ?? 0) + 100 * entry.score / total;
-  }
-  return percentages;
-}
 
 export class PelotonClassMuscleDataSource implements MuscleDataSource {
   constructor(
@@ -46,9 +28,12 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
     private readonly now: () => number = Date.now,
   ) {}
 
-  async getMuscleData(days: number): Promise<MuscleData> {
+  async getMuscleData(days: number, weighting: MuscleWeighting = 'raw'): Promise<MuscleData> {
     if (!Number.isInteger(days) || days < 1 || days > 90) {
       throw new RangeError('days must be an integer from 1 to 90');
+    }
+    if (weighting !== 'raw' && weighting !== 'per_minute') {
+      throw new RangeError('weighting must be raw or per_minute');
     }
     const end = this.now();
     const start = end - days * 86_400_000;
@@ -70,7 +55,7 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
     }));
 
     if (workouts.length > 0 && scoresByRide.size === 0) {
-      return { percentages: estimatePercentages(workouts), source: 'estimate', workoutsTotal: workouts.length, workoutsWithData: 0 };
+      return { percentages: impactToPelotonPercentages(calculateMuscleImpact(workouts)), source: 'estimate', workoutsTotal: workouts.length, workoutsWithData: 0 };
     }
 
     const totals: MusclePercentages = {};
@@ -81,10 +66,14 @@ export class PelotonClassMuscleDataSource implements MuscleDataSource {
       if (!scores?.some(s => s.score > 0)) continue;
       workoutsWithData += 1;
       // Each performance counts, even when the class metadata was fetched only once.
+      const classTotal = scores.reduce((sum, entry) => sum + entry.score, 0);
+      const minutes = Number.isFinite(workout.duration) ? Math.max(0, workout.duration / 60) : 0;
+      const factor = weighting === 'per_minute' ? minutes / classTotal : 1;
       for (const { muscle_group, score } of scores) {
         const key = muscleKey(muscle_group);
-        totals[key] = (totals[key] ?? 0) + score;
-        totalScore += score;
+        const weightedScore = score * factor;
+        totals[key] = (totals[key] ?? 0) + weightedScore;
+        totalScore += weightedScore;
       }
     }
     const percentages: MusclePercentages = {};
