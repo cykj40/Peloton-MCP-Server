@@ -13,6 +13,7 @@ import {
   SyncWorkoutsSchema,
 } from '../schemas/index.js';
 import { isError } from '../types/errors.js';
+import { formatWorkoutDate } from '../utils/workoutDates.js';
 
 export const correlationTools = [
   {
@@ -153,7 +154,7 @@ export async function handleCorrelationTool(
           };
         }
 
-        const workoutDate = new Date(workout.created_at * 1000).toLocaleString();
+        const workoutDate = formatWorkoutDate(workout.created_at);
         let output = `# Glucose Correlation Analysis\n\n`;
         output += `**Workout:** ${workout.name}\n`;
         output += `**Discipline:** ${workout.fitness_discipline}\n`;
@@ -294,7 +295,7 @@ export async function handleCorrelationTool(
 
         for (const alert of alerts) {
           const severityLabel = alert.severity.toUpperCase();
-          const workoutDate = new Date(alert.workout_timestamp * 1000).toLocaleString();
+          const workoutDate = formatWorkoutDate(alert.workout_timestamp);
 
           output += `## [${severityLabel}] ${alert.discipline.charAt(0).toUpperCase() + alert.discipline.slice(1)} Workout\n\n`;
           output += `- **Date:** ${workoutDate}\n`;

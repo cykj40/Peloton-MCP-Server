@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { normalizeWorkoutDateRange, WORKOUT_START_DATE_DESCRIPTION, WORKOUT_END_DATE_DESCRIPTION } from '../utils/workoutDates.js';
+import { formatWorkoutDate, normalizeWorkoutDateRange, WORKOUT_START_DATE_DESCRIPTION, WORKOUT_END_DATE_DESCRIPTION } from '../utils/workoutDates.js';
 import { PelotonClient } from '../services/pelotonClient.js';
 import { WorkoutSearchSchema } from '../schemas/index.js';
 import { isError } from '../types/errors.js';
@@ -115,7 +115,7 @@ export async function handleWorkoutTool(
       calories: workout.calories || 0,
       timestamp: workout.created_at,
       date: new Date(workout.created_at * 1000).toISOString(),
-      human_date: new Date(workout.created_at * 1000).toLocaleString(),
+      human_date: formatWorkoutDate(workout.created_at),
     }));
 
     if (params.response_format === 'json') {

@@ -52,7 +52,7 @@ describe('handleAnalyticsTool', () => {
 
   it('handles peloton_workout_stats markdown and json', async () => {
     const client = {
-      getRecentWorkouts: vi.fn().mockResolvedValue(workouts),
+      getWorkoutsInWindow: vi.fn().mockResolvedValue(workouts),
     } as unknown as Parameters<typeof handleAnalyticsTool>[2];
 
     const markdown = await handleAnalyticsTool(

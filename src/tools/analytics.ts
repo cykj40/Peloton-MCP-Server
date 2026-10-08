@@ -1,4 +1,4 @@
-import { normalizeWorkoutDateRange, WORKOUT_START_DATE_DESCRIPTION, WORKOUT_END_DATE_DESCRIPTION } from '../utils/workoutDates.js';
+import { formatWorkoutDate, normalizeWorkoutDateRange, WORKOUT_START_DATE_DESCRIPTION, WORKOUT_END_DATE_DESCRIPTION } from '../utils/workoutDates.js';
 import { MuscleActivityChartSchema } from '../schemas/index.js';
 import { muscleActivityChartTool, handleMuscleActivityChart } from './muscleActivityChart.js';
 import { z } from 'zod';
@@ -192,18 +192,28 @@ export async function handleAnalyticsTool(
     if (name === 'peloton_workout_stats') {
       const params = WorkoutStatsSchema.parse(args);
       const range = normalizeWorkoutDateRange(params.start_date, params.end_date);
-      const workouts = await client.getRecentWorkouts(100);
+      let partialNote: string | undefined;
+      // Missing bounds remain unbounded; stats previously had no default calendar window.
+      const workouts = await client.getWorkoutsInWindow(
+        range.startDate ?? new Date(-8640000000000000),
+        range.endDate ?? new Date(8640000000000000),
+        { endExclusive: range.endExclusive ?? false, onPartial: note => { partialNote = note; } },
+      );
       const stats = calculateWorkoutStats(workouts, range.startDate, range.endDate, range.endExclusive);
 
       if (params.response_format === 'json') {
         return {
-          content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }],
+          content: [
+            { type: 'text', text: JSON.stringify(stats, null, 2) },
+            ...(partialNote ? [{ type: 'text' as const, text: partialNote }] : []),
+          ],
           structuredContent: stats,
         };
       }
 
       let markdown = `# Workout Statistics\n\n`;
-      markdown += `**Period:** ${stats.period_start.split('T')[0]} to ${stats.period_end.split('T')[0]}\n\n`;
+      markdown += `**Period:** ${formatWorkoutDate(Date.parse(stats.period_start) / 1000, 'date')} to ${formatWorkoutDate(Date.parse(stats.period_end) / 1000, 'date')}\n\n`;
+      if (partialNote) markdown += `${partialNote}\n\n`;
       markdown += `## Totals\n`;
       markdown += `- **Total Workouts:** ${stats.total_workouts}\n`;
       markdown += `- **Total Duration:** ${Math.round(stats.total_duration / 60)} minutes\n`;

@@ -52,6 +52,24 @@ function calendarFormatter(): Intl.DateTimeFormat {
   return formatter;
 }
 
+let displayFormatter: Intl.DateTimeFormat | undefined;
+
+/** Human display only. Keep stored epoch seconds and machine-readable ISO fields unchanged. */
+export function formatWorkoutDate(timestampSeconds: number, style: 'date' | 'dateTime' = 'dateTime'): string {
+  const date = new Date(timestampSeconds * 1000);
+  const calendar = calendarFormatter(); // Also validates APP_TIMEZONE with a clear configuration error.
+  if (style === 'date') {
+    const parts = Object.fromEntries(calendar.formatToParts(date).map(part => [part.type, part.value]));
+    return `${parts['year']!.padStart(4, '0')}-${parts['month']}-${parts['day']}`;
+  }
+  displayFormatter ??= new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE, calendar: 'gregory', numberingSystem: 'latn',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short',
+  });
+  return displayFormatter.format(date);
+}
+
 /** Find the first instant of a local day, including repeated or skipped DST midnights. */
 function localDayStart(calendar: Date, allowSkippedDay: boolean): Date {
   const target = calendar.getTime();

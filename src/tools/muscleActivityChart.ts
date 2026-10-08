@@ -9,6 +9,8 @@ import { formatMuscleChartText } from '../charts/muscleChartText.js';
 import { REGIONS } from '../charts/muscleRegions.js';
 import { formatMuscleName } from '../services/analytics.js';
 import type { ToolResponse } from '../types/index.js';
+import { APP_TIMEZONE } from '../constants.js';
+import { formatWorkoutDate } from '../utils/workoutDates.js';
 
 export const muscleActivityChartTool = {
   name: 'peloton_muscle_activity_chart',
@@ -43,14 +45,14 @@ export async function handleMuscleActivityChart(
     const disciplines = new Map<string, number>();
     for (const workout of workouts) disciplines.set(workout.fitness_discipline, (disciplines.get(workout.fitness_discipline) ?? 0) + 1);
     const lines = [
-      `Muscle activity — rolling last ${days} days (${new Date(context.start).toISOString()} to ${new Date(context.end).toISOString()}). Dates below are UTC.`,
+      `Muscle activity — rolling last ${days} days (${formatWorkoutDate(context.start / 1000)} to ${formatWorkoutDate(context.end / 1000)}). Dates below are ${APP_TIMEZONE}.`,
       `Workouts by discipline: ${[...disciplines.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, count]) => `${line(name)} ${count}`).join(', ') || 'none'}; total ${data.workoutsTotal}.`,
       'Workouts:',
     ];
     const ordered = [...workouts].sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id));
     const limit = ordered.length > 15 ? 14 : 15;
     lines.push(...ordered.slice(0, limit).map(workout =>
-      `- ${new Date(workout.created_at * 1000).toISOString().slice(0, 10)} | ${line(workout.fitness_discipline)} | ${line(workout.name)} | ${minutes(workout.duration)} min`));
+      `- ${formatWorkoutDate(workout.created_at, 'date')} | ${line(workout.fitness_discipline)} | ${line(workout.name)} | ${minutes(workout.duration)} min`));
     if (ordered.length > 15) lines.push(`- ${ordered.length - 14} more workouts in this window.`);
     if (!ordered.length) lines.push('No workouts in this rolling window.');
     lines.push(

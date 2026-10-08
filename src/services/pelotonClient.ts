@@ -35,6 +35,14 @@ const cache = new Map<string, CacheItem<unknown>>();
 const FILTERED_WORKOUT_FETCH_SIZE = 500;
 const MAX_WORKOUT_PAGES = 25;
 
+type WorkoutPagination = Pick<(typeof PelotonWorkoutsListResponseSchema)['_output'], 'total' | 'page_count' | 'show_next'>;
+
+export interface WorkoutWindowOptions {
+  endExclusive?: boolean;
+  /** Opt in to partial history with a visible note; chart callers require complete history. */
+  onPartial?: (note: string) => void;
+}
+
 function getEndpoint(config: AxiosRequestConfig): string {
   const url = config.url ?? 'unknown-endpoint';
 
@@ -230,6 +238,8 @@ export class PelotonClient {
   private bearerToken: string;
   private userId?: string;
   private cachedToken: PelotonAuthToken | null = null;
+  // Keep page-zero reuse compatible with the public array return shape, without a second fetch.
+  private workoutPagination = new WeakMap<PelotonWorkout[], WorkoutPagination>();
 
   constructor(credential: string) {
     if (!credential.startsWith('eyJ')) {
@@ -437,7 +447,10 @@ export class PelotonClient {
    * Get recent workouts.
    */
   async getRecentWorkouts(limit = 10): Promise<PelotonWorkout[]> {
-    return (await this.getWorkoutsPage(limit, 0)).data;
+    const response = await this.getWorkoutsPage(limit, 0);
+    const { total, page_count, show_next } = response;
+    this.workoutPagination.set(response.data, { total, page_count, show_next });
+    return response.data;
   }
 
   private async getWorkoutsPage(limit: number, page: number) {
@@ -490,27 +503,40 @@ export class PelotonClient {
   }
 
   /** Fetch a complete window, rather than truncating active users at a fixed workout limit. */
-  async getWorkoutsInWindow(start: Date, end: Date): Promise<PelotonWorkout[]> {
+  async getWorkoutsInWindow(start: Date, end: Date, options: WorkoutWindowOptions = {}): Promise<PelotonWorkout[]> {
     const startSeconds = start.getTime() / 1000;
     const endSeconds = end.getTime() / 1000;
     if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || startSeconds > endSeconds) {
       throw new RangeError('Invalid workout window');
     }
     const workouts = new Map<string, PelotonWorkout>();
+    const incomplete = (reason: string): void => {
+      if (!options.onPartial) throw new PelotonApiError(reason, 200, '/api/user/<redacted>/workouts');
+      options.onPartial(`Partial data: ${reason}; totals may be incomplete.`);
+    };
     for (let page = 0; ; page += 1) {
       if (page >= MAX_WORKOUT_PAGES) {
-        throw new PelotonApiError('Workout pagination exceeded 25 pages', 200, '/api/user/<redacted>/workouts');
+        incomplete(`Workout pagination exceeded ${MAX_WORKOUT_PAGES} pages`);
+        break;
       }
-      const response = await this.getWorkoutsPage(100, page);
+      // Reuse the normal recent-workout fetch for page zero, including its five-minute cache.
+      const first = page === 0 ? await this.getRecentWorkouts(100) : undefined;
+      const response = first
+        ? { ...this.workoutPagination.get(first), data: first }
+        : await this.getWorkoutsPage(100, page);
       let added = 0;
       for (const workout of response.data) {
         if (!workouts.has(workout.id)) added += 1;
         workouts.set(workout.id, workout);
       }
       if (response.data.length === 0) break;
-      if (added === 0) throw new PelotonApiError('Workout pagination made no progress', 200, '/api/user/<redacted>/workouts');
+      if (added === 0) {
+        incomplete('Workout pagination made no progress');
+        break;
+      }
       if (
-        response.data.every(workout => workout.created_at < startSeconds) ||
+        // The API sorts newest first; once this page crosses the start, later pages are older.
+        response.data.some(workout => workout.created_at < startSeconds) ||
         response.show_next === false ||
         (response.page_count !== undefined && page + 1 >= response.page_count) ||
         (response.total !== undefined && workouts.size >= response.total)
@@ -518,7 +544,9 @@ export class PelotonClient {
       if (response.show_next === undefined && response.page_count === undefined &&
           response.total === undefined && response.data.length < 100) break;
     }
-    return [...workouts.values()].filter(w => w.created_at >= startSeconds && w.created_at <= endSeconds);
+    return [...workouts.values()].filter(w => matchesWorkoutDateRange(w.created_at, {
+      startDate: start, endDate: end, endExclusive: options.endExclusive ?? false,
+    }));
   }
 
   /** Account-level Body activity. Never persist or cache the response's workout list. */
