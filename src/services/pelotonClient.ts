@@ -1,3 +1,4 @@
+import { matchesWorkoutDateRange } from '../utils/workoutDates.js';
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
 import {
   PELOTON_API_URL,
@@ -667,15 +668,7 @@ export class PelotonClient {
       );
     }
 
-    if (params.startDate) {
-      const startTimestamp = Math.floor(params.startDate.getTime() / 1000);
-      filtered = filtered.filter((workout) => workout.created_at >= startTimestamp);
-    }
-
-    if (params.endDate) {
-      const endTimestamp = Math.floor(params.endDate.getTime() / 1000);
-      filtered = filtered.filter((workout) => workout.created_at <= endTimestamp);
-    }
+    filtered = filtered.filter(workout => matchesWorkoutDateRange(workout.created_at, params));
 
     return params.limit === undefined ? filtered : filtered.slice(0, params.limit);
   }

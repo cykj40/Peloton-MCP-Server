@@ -1,3 +1,4 @@
+import { normalizeWorkoutDateRange, WORKOUT_START_DATE_DESCRIPTION, WORKOUT_END_DATE_DESCRIPTION } from '../utils/workoutDates.js';
 import { MuscleActivityChartSchema } from '../schemas/index.js';
 import { muscleActivityChartTool, handleMuscleActivityChart } from './muscleActivityChart.js';
 import { z } from 'zod';
@@ -70,11 +71,11 @@ export const analyticsTools = [
       properties: {
         start_date: {
           type: 'string',
-          description: 'Start date (YYYY-MM-DD)',
+          description: WORKOUT_START_DATE_DESCRIPTION,
         },
         end_date: {
           type: 'string',
-          description: 'End date (YYYY-MM-DD)',
+          description: WORKOUT_END_DATE_DESCRIPTION,
         },
         response_format: {
           type: 'string',
@@ -190,10 +191,9 @@ export async function handleAnalyticsTool(
 
     if (name === 'peloton_workout_stats') {
       const params = WorkoutStatsSchema.parse(args);
+      const range = normalizeWorkoutDateRange(params.start_date, params.end_date);
       const workouts = await client.getRecentWorkouts(100);
-      const startDate = params.start_date ? new Date(params.start_date) : undefined;
-      const endDate = params.end_date ? new Date(params.end_date) : undefined;
-      const stats = calculateWorkoutStats(workouts, startDate, endDate);
+      const stats = calculateWorkoutStats(workouts, range.startDate, range.endDate, range.endExclusive);
 
       if (params.response_format === 'json') {
         return {

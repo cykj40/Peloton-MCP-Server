@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { workoutDateInputError, WORKOUT_START_DATE_DESCRIPTION, WORKOUT_END_DATE_DESCRIPTION } from '../utils/workoutDates.js';
 
-const DateStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, {
-  message: 'Date must be in YYYY-MM-DD format',
+const DateStringSchema = z.string().superRefine((value, ctx) => {
+  const error = workoutDateInputError(value);
+  if (error) ctx.addIssue({ code: z.ZodIssueCode.custom, message: error });
 });
 
 export const WorkoutSearchSchema = z.object({
@@ -22,11 +24,11 @@ export const WorkoutSearchSchema = z.object({
 
   start_date: DateStringSchema
     .optional()
-    .describe("Start date (YYYY-MM-DD) for glucose correlation"),
+    .describe(WORKOUT_START_DATE_DESCRIPTION),
 
   end_date: DateStringSchema
     .optional()
-    .describe("End date (YYYY-MM-DD)"),
+    .describe(WORKOUT_END_DATE_DESCRIPTION),
 
   response_format: z.enum(['markdown', 'json'])
     .default('markdown'),
@@ -46,11 +48,11 @@ export const MuscleAnalysisSchema = z.object({
 export const WorkoutStatsSchema = z.object({
   start_date: DateStringSchema
     .optional()
-    .describe("Start date (YYYY-MM-DD)"),
+    .describe(WORKOUT_START_DATE_DESCRIPTION),
 
   end_date: DateStringSchema
     .optional()
-    .describe("End date (YYYY-MM-DD)"),
+    .describe(WORKOUT_END_DATE_DESCRIPTION),
 
   response_format: z.enum(['markdown', 'json'])
     .default('markdown')

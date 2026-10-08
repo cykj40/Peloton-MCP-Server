@@ -1,3 +1,4 @@
+import type { WorkoutDateRange } from '../utils/workoutDates.js';
 import { Discipline } from '../constants.js';
 
 export interface PelotonWorkout {
@@ -44,11 +45,9 @@ export interface PelotonUserProfile {
   created_at?: number;
 }
 
-export interface WorkoutSearchParams {
+export interface WorkoutSearchParams extends WorkoutDateRange {
   discipline?: string;
   instructor?: string;
-  startDate?: Date;
-  endDate?: Date;
   limit?: number;
 }
 

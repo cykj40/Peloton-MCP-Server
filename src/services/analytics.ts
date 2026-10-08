@@ -1,3 +1,4 @@
+import { matchesWorkoutDateRange, type WorkoutDateRange } from '../utils/workoutDates.js';
 import { PelotonWorkout, MuscleGroupData, MuscleImpactData, WorkoutStats } from '../types/index.js';
 import { Discipline, MUSCLE_INTENSITY_MAP } from '../constants.js';
 
@@ -156,19 +157,13 @@ export function calculateMuscleActivity(
 export function calculateWorkoutStats(
   workouts: PelotonWorkout[],
   startDate?: Date,
-  endDate?: Date
+  endDate?: Date,
+  endExclusive = false
 ): WorkoutStats {
-  let filtered = workouts;
-
-  // Filter by date range
-  if (startDate) {
-    const startTimestamp = Math.floor(startDate.getTime() / 1000);
-    filtered = filtered.filter(w => w.created_at >= startTimestamp);
-  }
-  if (endDate) {
-    const endTimestamp = Math.floor(endDate.getTime() / 1000);
-    filtered = filtered.filter(w => w.created_at <= endTimestamp);
-  }
+  const range: WorkoutDateRange = { endExclusive };
+  if (startDate) range.startDate = startDate;
+  if (endDate) range.endDate = endDate;
+  const filtered = workouts.filter(workout => matchesWorkoutDateRange(workout.created_at, range));
 
   // Calculate totals
   const totalWorkouts = filtered.length;

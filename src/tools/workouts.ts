@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { normalizeWorkoutDateRange, WORKOUT_START_DATE_DESCRIPTION, WORKOUT_END_DATE_DESCRIPTION } from '../utils/workoutDates.js';
 import { PelotonClient } from '../services/pelotonClient.js';
 import { WorkoutSearchSchema } from '../schemas/index.js';
 import { isError } from '../types/errors.js';
@@ -27,11 +28,11 @@ export const workoutTools = [
         },
         start_date: {
           type: 'string',
-          description: 'Start date (YYYY-MM-DD) for glucose correlation',
+          description: WORKOUT_START_DATE_DESCRIPTION,
         },
         end_date: {
           type: 'string',
-          description: 'End date (YYYY-MM-DD)',
+          description: WORKOUT_END_DATE_DESCRIPTION,
         },
         response_format: {
           type: 'string',
@@ -79,20 +80,16 @@ export async function handleWorkoutTool(
     }
 
     const params = WorkoutSearchSchema.parse(args);
-    const searchParams: WorkoutSearchParams = { limit: params.limit };
+    const searchParams: WorkoutSearchParams = {
+      limit: params.limit,
+      ...normalizeWorkoutDateRange(params.start_date, params.end_date),
+    };
     if (params.discipline) {
       searchParams.discipline = params.discipline;
     }
     if (params.instructor) {
       searchParams.instructor = params.instructor;
     }
-    if (params.start_date) {
-      searchParams.startDate = new Date(params.start_date);
-    }
-    if (params.end_date) {
-      searchParams.endDate = new Date(params.end_date);
-    }
-
     const workouts = await client.searchWorkouts(searchParams);
 
     if (params.json_response) {

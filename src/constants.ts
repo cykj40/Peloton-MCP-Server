@@ -1,3 +1,6 @@
+/** Calendar-date filters use this IANA timezone, independent of Fly's UTC runtime. */
+export const APP_TIMEZONE = process.env.APP_TIMEZONE?.trim() || 'America/New_York';
+
 export const PELOTON_API_URL = 'https://api.onepeloton.com';
 
 /** Cloudflare bypass path for blocked POST /auth/login (see peloton-to-garmin issue #795). */
