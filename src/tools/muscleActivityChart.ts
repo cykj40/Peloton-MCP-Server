@@ -4,6 +4,7 @@ import type { PelotonClient } from '../services/pelotonClient.js';
 import { RideMuscleCache, rideMuscleCache } from '../services/rideMuscleCache.js';
 import { buildSessionCandidates, recommendMuscleBalance, regionPercentages, PROJECTION_ASSUMPTION } from '../services/muscleRecommendations.js';
 import { renderMuscleChartPng } from '../charts/muscleChartRenderer.js';
+import { summarizeMusclePlan } from '../charts/muscleChartSummary.js';
 import { formatMuscleChartText } from '../charts/muscleChartText.js';
 import { REGIONS } from '../charts/muscleRegions.js';
 import { formatMuscleName } from '../services/analytics.js';
@@ -58,7 +59,7 @@ export async function handleMuscleActivityChart(
         ? "Weighting: raw = Peloton's own score units, so long or intense classes count more."
         : "Weighting: per_minute = each class's share of muscles weighted by the minutes you spent.",
       ...(data.source === 'estimate' ? ['Class data was unavailable; the displayed estimate uses the legacy discipline/title model rather than measured class weighting.'] : []),
-      'All 13 regions (rounded before applying 5%/10% states); Hips and Forearms are listed here while the current figure has no shapes for them:',
+      'All 13 regions (rounded before applying 5%/10% states):',
       ...formatMuscleChartText(data).split('\n').slice(1).map(region => `- ${region}`),
     );
     try {
@@ -94,7 +95,10 @@ export async function handleMuscleActivityChart(
     lines.push(data.source === 'estimate'
       ? 'Caveat: muscle scores are estimated from discipline and title; they are not Peloton class scores.'
       : 'Caveat: scores come from Peloton class data; they describe the classes, not measured individual muscle effort. Workouts without scores are excluded.');
-    const png = renderMuscleChartPng({ percentages: data.percentages, periodLabel: `Rolling ${days} days`, workoutCount: data.workoutsTotal });
+    const png = renderMuscleChartPng({
+      percentages: data.percentages, periodLabel: `Last ${days} days`, workoutCount: data.workoutsTotal,
+      sourceInfo: data, plannerSummary: summarizeMusclePlan(plan),
+    });
     return { content: [{ type: 'image', data: png.toString('base64'), mimeType: 'image/png' }, { type: 'text', text: lines.join('\n') }] };
   } catch {
     return { isError: true, content: [{ type: 'text', text: 'Unable to build the muscle activity chart. Please try again.' }] };

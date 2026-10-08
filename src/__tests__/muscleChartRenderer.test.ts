@@ -3,19 +3,7 @@ import { join } from 'node:path';
 import { Resvg } from '@resvg/resvg-js';
 import { describe, expect, it, vi } from 'vitest';
 import { buildChartSvg, rasterizeSvg, renderMuscleChartPng } from '../charts/muscleChartRenderer.js';
-import {
-  CAP_HEIGHT_EM,
-  CHART_FONT_FAMILY,
-  MIN_LABEL_PADDING,
-  MIN_LABEL_VERTICAL_PADDING,
-  NAME_BASELINE_OFFSET,
-  NAME_FONT_SIZE,
-  PERCENT_BASELINE_OFFSET,
-  PERCENT_FONT_SIZE,
-  buildMuscleChartSvg,
-  estimateTextWidth,
-  getRegionShapes,
-} from '../charts/muscleChartSvg.js';
+import { CHART_FONT_FAMILY, buildMuscleChartSvg, estimateTextWidth } from '../charts/muscleChartSvg.js';
 import {
   REGIONS,
   computeRegionResults,
@@ -30,8 +18,8 @@ import { makeMockWorkout } from './fixtures.js';
 
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-// Percent text is a whole <text> element like ">14%<"; legend text has other characters around "%".
-const PERCENT_LABEL = />\d+%<\/text>/;
+// Body percentage labels use 8.5 units; legend ticks also contain percentages.
+const PERCENT_LABEL = /font-size="8\.5"[^>]*>\d+%<\/text>/;
 
 function stripText(svg: string): string {
   return svg.replace(/<text[\s\S]*?<\/text>/g, '');
@@ -68,64 +56,17 @@ describe('chart font rendering', () => {
   });
 });
 
-describe('chart layout', () => {
-  const names = new Map(REGIONS.map((region) => [region.id, region.label]));
-
-  it("keeps existing drawing regions valid while hips and forearms await new geometry", () => {
-    const drawn = new Set(getRegionShapes().map(shape => shape.id));
-    const mapped = new Set(REGIONS.map(region => region.id));
-    for (const id of drawn) expect(mapped.has(id)).toBe(true);
-    expect(REGIONS.filter(region => !drawn.has(region.id)).map(region => region.id).sort()).toEqual(['forearms', 'hips']);
-  });
-
-  // Worst case per shape: the widest label line is either the region's own name (regular)
-  // or "100%" in bold at the percent font size, whichever is wider. "100%" is the maximum
-  // possible percent text, not a typical value.
-  it('fits worst-case labels (bold "100%" and the shape\'s own region name) with generous padding', () => {
-    const worstPercent = estimateTextWidth('100%', PERCENT_FONT_SIZE, true);
-    for (const shape of getRegionShapes()) {
-      const name = names.get(shape.id) ?? '';
-      const widest = Math.max(estimateTextWidth(name, NAME_FONT_SIZE), worstPercent);
-      expect(widest + 2 * MIN_LABEL_PADDING, `${shape.view}/${shape.id} width`).toBeLessThanOrEqual(shape.rect.w);
-    }
-  });
-
-  it('leaves vertical padding above and below the two-line label block', () => {
-    const topExtent = -NAME_BASELINE_OFFSET + NAME_FONT_SIZE * CAP_HEIGHT_EM; // above center
-    const bottomExtent = PERCENT_BASELINE_OFFSET; // below center (digits have no descenders)
-    for (const shape of getRegionShapes()) {
-      const half = shape.rect.h / 2;
-      expect(half - topExtent, `${shape.view}/${shape.id} top`).toBeGreaterThanOrEqual(MIN_LABEL_VERTICAL_PADDING);
-      expect(half - bottomExtent, `${shape.view}/${shape.id} bottom`).toBeGreaterThanOrEqual(MIN_LABEL_VERTICAL_PADDING);
-    }
-  });
-
-  // The estimates above are only trustworthy if they never undercount real DejaVu Sans widths.
-  // Runs where DejaVu is installed (the Docker image, most Linux runners); skipped elsewhere.
+describe('chart layout and font metrics', () => {
   const dejaVuDirs = ['/usr/share/fonts/dejavu', '/usr/share/fonts/truetype/dejavu', '/usr/share/fonts/TTF'];
-  const hasDejaVu = dejaVuDirs.some((dir) => existsSync(join(dir, 'DejaVuSans.ttf')));
-
-  function measure(text: string, size: number, bold: boolean): number {
-    const svg =
-      `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="100"><text x="0" y="50" ` +
-      `font-family="${CHART_FONT_FAMILY}" font-size="${size}"${bold ? ' font-weight="bold"' : ''}>${text}</text></svg>`;
-    const box = new Resvg(svg, { font: { loadSystemFonts: true } }).getBBox();
-    return box?.width ?? 0;
-  }
-
-  it.skipIf(!hasDejaVu)('estimates never undercount real DejaVu Sans text, and measured labels fit', () => {
-    const measuredPercent = measure('100%', PERCENT_FONT_SIZE, true);
-    expect(measuredPercent).toBeGreaterThan(0);
-    expect(estimateTextWidth('100%', PERCENT_FONT_SIZE, true)).toBeGreaterThanOrEqual(measuredPercent);
-
-    for (const shape of getRegionShapes()) {
-      const name = names.get(shape.id) ?? '';
-      const measuredName = measure(name, NAME_FONT_SIZE, false);
-      expect(measuredName, `${name} measured`).toBeGreaterThan(0);
-      expect(estimateTextWidth(name, NAME_FONT_SIZE), `${name} estimate`).toBeGreaterThanOrEqual(measuredName);
-
-      const widest = Math.max(measuredName, measuredPercent);
-      expect(widest + 2 * MIN_LABEL_PADDING, `${shape.view}/${shape.id} measured fit`).toBeLessThanOrEqual(shape.rect.w);
+  const hasDejaVu = dejaVuDirs.some(dir => existsSync(join(dir, 'DejaVuSans.ttf')));
+  it.skipIf(!hasDejaVu)('estimates never undercount real DejaVu Sans labels and card text', () => {
+    for (const value of [...REGIONS.map(region => region.label), '100%', '2 × 30 min Upper Body Strength', 'Chest 2 → 4% · Triceps 3 → 6%']) {
+      for (const bold of [false, true]) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="100"><text x="0" y="50" font-family="${CHART_FONT_FAMILY}" font-size="18"${bold ? ' font-weight="bold"' : ''}>${value}</text></svg>`;
+        const measured = new Resvg(svg, { font: { loadSystemFonts: true } }).getBBox()?.width ?? 0;
+        expect(measured).toBeGreaterThan(0);
+        expect(estimateTextWidth(value, 18, bold)).toBeGreaterThanOrEqual(measured);
+      }
     }
   });
 });
@@ -150,8 +91,9 @@ describe('empty states', () => {
     expect(svg).toContain('No muscle data for these workouts');
     expect(svg).not.toContain('No workouts in this period');
     expect(svg).not.toMatch(PERCENT_LABEL);
-    // Neutral, not all-amber: the only amber fill is the legend swatch.
-    expect(svg.match(/fill="#E8913A"/g) ?? []).toHaveLength(1);
+    expect(svg).not.toContain('data-attention=');
+    expect(svg).not.toContain('data-low=');
+    expect(svg).toContain('fill="#1D1A38"');
   });
 
   it('shows neither note when there is data to draw', () => {

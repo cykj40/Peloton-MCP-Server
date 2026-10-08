@@ -1,5 +1,6 @@
 import { Resvg } from '@resvg/resvg-js';
-import { buildMuscleChartSvg } from './muscleChartSvg.js';
+import { compactPng } from './compactPng.js';
+import { buildMuscleChartSvg, type ChartSourceInfo, type PlannerSummary } from './muscleChartSvg.js';
 import {
   computeRegionResults,
   getEmptyReason,
@@ -7,7 +8,7 @@ import {
   type StateClassifier,
 } from './muscleRegions.js';
 
-/** Output is rendered at this multiple of the SVG's 880px width so small labels stay crisp. */
+/** Output is rendered at this multiple of the SVG's 1200px width so small labels stay crisp. */
 const RENDER_ZOOM = 1.5;
 
 export interface MuscleChartInput {
@@ -19,6 +20,8 @@ export interface MuscleChartInput {
   workoutCount: number;
   /** Defaults to the flat 5% / 10% thresholds; swap to change how states are decided. */
   classifier?: StateClassifier;
+  sourceInfo?: ChartSourceInfo;
+  plannerSummary?: PlannerSummary | null;
 }
 
 /**
@@ -31,7 +34,7 @@ export function rasterizeSvg(svg: string): Buffer {
     fitTo: { mode: 'zoom', value: RENDER_ZOOM },
     font: { loadSystemFonts: true },
   });
-  return Buffer.from(resvg.render().asPng());
+  return compactPng(Buffer.from(resvg.render().asPng()));
 }
 
 /** Data in, SVG out (no rasterizing); exposed so the data-to-picture path can be inspected. */
@@ -43,6 +46,8 @@ export function buildChartSvg(input: MuscleChartInput): string {
     periodLabel: input.periodLabel,
     emptyReason: getEmptyReason(input.workoutCount, results),
     classifier,
+    ...(input.sourceInfo ? { sourceInfo: input.sourceInfo } : {}),
+    ...(input.plannerSummary !== undefined ? { plannerSummary: input.plannerSummary } : {}),
   });
 }
 

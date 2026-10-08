@@ -9,6 +9,7 @@ import { RideMuscleCache } from '../../services/rideMuscleCache.js';
 import { saveToken } from '../../services/tokenStore.js';
 import { handleMuscleActivityChart } from '../../tools/muscleActivityChart.js';
 import { handleAnalyticsTool, analyticsTools } from '../../tools/analytics.js';
+import * as chartRenderer from '../../charts/muscleChartRenderer.js';
 import { REGIONS } from '../../charts/muscleRegions.js';
 import { setupTestDb, teardownTestDb } from '../testDb.js';
 import type { MuscleScores } from '../../types/muscleData.js';
@@ -62,6 +63,7 @@ describe('muscle activity chart handler', () => {
   });
 
   it('returns a real PNG plus all text sections, projections and examples from older personal history', async () => {
+    const rendering = vi.spyOn(chartRenderer, 'renderMuscleChartPng');
     history([rawWorkout('recent', 1), rawWorkout('arms', 40, '20 min Arms & Shoulders Strength', 'strength', 1200)]);
     details('recent', { ...balanced, biceps: 0 }); details('arms', { biceps: 10 }); app();
     const result = await run();
@@ -77,6 +79,11 @@ describe('muscle activity chart handler', () => {
     expect(text).toContain('Needs attention (<5%)');
     expect(text).not.toMatch(/insulin|glucose|medical advice/i);
     expect(text).not.toContain('class-arms');
+    expect(text).not.toContain('current figure has no shapes');
+    expect(rendering).toHaveBeenCalledWith(expect.objectContaining({
+      sourceInfo: expect.objectContaining({ source: 'peloton_class_data', workoutsWithData: 1, workoutsTotal: 1 }),
+      plannerSummary: expect.objectContaining({ sessionLine: expect.stringContaining('20 min'), shiftsLine: expect.stringContaining('Biceps 0 →') }),
+    }));
   });
 
   it.each([{ days: 0 }, { days: 91 }, { days: 1.5 }, { days: '7' }, { weighting: 'invalid' }, { weighting: null }])('validates options without fetching data: %j', async args => {
@@ -97,6 +104,7 @@ describe('muscle activity chart handler', () => {
   });
 
   it('labels estimate fallback and does not mix estimated totals with class-based projections', async () => {
+    const rendering = vi.spyOn(chartRenderer, 'renderMuscleChartPng');
     history([rawWorkout('failed', 1)]);
     nock(PELOTON_API_URL).get('/api/ride/class-failed/details').reply(500);
     app();
@@ -107,6 +115,10 @@ describe('muscle activity chart handler', () => {
     expect(text).toContain('muscle scores are estimated');
     expect(text).toContain('No suggestions: class data is unavailable');
     expect(text).not.toContain('Projected percentages after the plan');
+    expect(rendering).toHaveBeenCalledWith(expect.objectContaining({
+      sourceInfo: expect.objectContaining({ source: 'estimate', workoutsWithData: 0, workoutsTotal: 1 }),
+      plannerSummary: null,
+    }));
   });
 
   it('omits a failed app comparison and still returns the per-minute chart', async () => {
